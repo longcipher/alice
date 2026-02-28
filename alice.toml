@@ -1,0 +1,20 @@
+[runtime]
+default_model = "openai:gpt-4o-mini"
+max_steps = 12
+turn_timeout_ms = 90000
+dispatch_mode = "native_preferred"
+
+[memory]
+db_path = "./.alice/memory.db"
+recall_limit = 6
+bm25_weight = 0.3
+vector_weight = 0.7
+vector_dimensions = 384
+enable_vector = true
+
+# Optional MCP servers
+# [[mcp.servers]]
+# id = "filesystem"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+# tool_timeout_ms = 15000
