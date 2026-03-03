@@ -1,0 +1,25 @@
+[package]
+name = "alice-adapters"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alice-core = { path = "../alice-core" }
+async-trait.workspace = true
+bob-core.workspace = true
+eyre = { workspace = true, optional = true }
+parking_lot.workspace = true
+rusqlite = { workspace = true, features = ["bundled"] }
+serde_json.workspace = true
+serenity = { version = "0.12.5", optional = true }
+sqlite-vec.workspace = true
+teloxide = { version = "0.17.0", optional = true }
+tokio = { workspace = true, features = ["io-util", "io-std"] }
+tracing.workspace = true
+
+[features]
+discord = ["dep:serenity", "dep:eyre"]
+telegram = ["dep:teloxide", "dep:eyre"]

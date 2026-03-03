@@ -2,7 +2,7 @@
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "TODO"
+repository = "https://github.com/longcipher/alice"
 
 [workspace]
 members = ["bin/*", "crates/*"]
@@ -11,9 +11,9 @@ resolver = "3"
 
 [workspace.dependencies]
 async-trait = "0.1.89"
-bob-adapters = "0.1.2"
-bob-core = "0.1.2"
-bob-runtime = "0.1.2"
+bob-adapters = "0.2.0"
+bob-core = "0.2.0"
+bob-runtime = "0.2.0"
 clap = "4.5.60"
 config = "0.15.19"
 eyre = "0.6.12"

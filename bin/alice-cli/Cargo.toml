@@ -1,0 +1,27 @@
+[package]
+name = "alice-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "alice"
+path = "src/main.rs"
+
+[dependencies]
+alice-runtime = { path = "../../crates/alice-runtime" }
+clap = { workspace = true, features = ["derive"] }
+eyre.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+alice-adapters = { path = "../../crates/alice-adapters" }
+alice-core = { path = "../../crates/alice-core" }
+async-trait.workspace = true
+bob-adapters.workspace = true
+bob-core.workspace = true
+bob-runtime.workspace = true
+parking_lot.workspace = true
+
+[lints]
+workspace = true

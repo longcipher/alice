@@ -1,0 +1,31 @@
+[package]
+name = "alice-runtime"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alice-adapters = { path = "../alice-adapters" }
+alice-core = { path = "../alice-core" }
+bob-adapters.workspace = true
+bob-core.workspace = true
+bob-runtime.workspace = true
+config.workspace = true
+eyre.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = [
+    "macros",
+    "rt-multi-thread",
+    "io-util",
+] }
+tracing.workspace = true
+
+[features]
+discord = ["alice-adapters/discord"]
+telegram = ["alice-adapters/telegram"]
+
+[dev-dependencies]
+async-trait.workspace = true
+parking_lot.workspace = true

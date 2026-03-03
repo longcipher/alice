@@ -12,7 +12,28 @@ vector_weight = 0.7
 vector_dimensions = 384
 enable_vector = true
 
-# Optional MCP servers
+# Skill system configuration — auto-selects relevant SKILL.md files per turn.
+# [skills]
+# enabled = true
+# max_selected = 3
+# token_budget = 1800
+#
+# [[skills.sources]]
+# path = "./skills"
+# recursive = true
+
+# Channel adapters — enable multi-channel input beyond the default CLI REPL.
+# Discord requires ALICE_DISCORD_TOKEN env var.
+# Telegram requires ALICE_TELEGRAM_TOKEN env var.
+# [channels.discord]
+# enabled = false
+# [channels.telegram]
+# enabled = false
+
+# Built-in tools (local/file_read, local/file_write, local/file_list,
+# local/shell_exec) are always available. Additional MCP servers can be
+# configured below.
+
 # [[mcp.servers]]
 # id = "filesystem"
 # command = "npx"
