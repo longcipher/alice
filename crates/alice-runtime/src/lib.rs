@@ -4,7 +4,7 @@
 //! for the Alice agent.
 
 pub mod bootstrap;
-pub mod channel_runner;
+pub mod chatbot_runner;
 pub mod commands;
 pub mod config;
 pub mod context;

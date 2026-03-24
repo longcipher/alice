@@ -19,6 +19,7 @@ alice-adapters = { path = "../../crates/alice-adapters" }
 alice-core = { path = "../../crates/alice-core" }
 async-trait.workspace = true
 bob-adapters.workspace = true
+bob-chat.workspace = true
 bob-core.workspace = true
 bob-runtime.workspace = true
 parking_lot.workspace = true

@@ -10,10 +10,12 @@ workspace = true
 alice-adapters = { path = "../alice-adapters" }
 alice-core = { path = "../alice-core" }
 bob-adapters.workspace = true
+bob-chat.workspace = true
 bob-core.workspace = true
 bob-runtime.workspace = true
 config.workspace = true
 eyre.workspace = true
+futures-util = "0.3.32"
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = [
     "macros",
@@ -28,4 +30,5 @@ telegram = ["alice-adapters/telegram"]
 
 [dev-dependencies]
 async-trait.workspace = true
+bob-chat.workspace = true
 parking_lot.workspace = true

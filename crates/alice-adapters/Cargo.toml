@@ -9,7 +9,7 @@ workspace = true
 [dependencies]
 alice-core = { path = "../alice-core" }
 async-trait.workspace = true
-bob-core.workspace = true
+bob-chat.workspace = true
 eyre = { workspace = true, optional = true }
 parking_lot.workspace = true
 rusqlite = { workspace = true, features = ["bundled"] }

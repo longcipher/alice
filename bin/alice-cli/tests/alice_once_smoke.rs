@@ -5,7 +5,7 @@
 //! 2. The `AgentLoop` correctly routes natural language to the LLM.
 //! 3. Memory recall is injected and persisted across turns.
 //! 4. Skill composer integration works end-to-end.
-//! 5. Channel runner processes mock messages correctly.
+//! 5. ChatBot runner processes mock adapters correctly.
 //! 6. Full context with all components is accessible.
 
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
@@ -13,7 +13,7 @@ use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 use alice_adapters::memory::sqlite_store::SqliteMemoryStore;
 use alice_core::memory::{domain::HybridWeights, service::MemoryService};
 use alice_runtime::{
-    channel_runner::run_channels,
+    chatbot_runner::run_chatbot,
     config::{SkillSourceEntry, SkillsConfig},
     context::AliceRuntimeContext,
     handle_input::handle_input_with_skills,
@@ -21,12 +21,14 @@ use alice_runtime::{
 };
 use async_trait::async_trait;
 use bob_adapters::tape_memory::InMemoryTapeStore;
-use bob_core::{
-    channel::{Channel, ChannelError, ChannelMessage, ChannelOutput},
-    error::AgentError,
-    ports::TapeStorePort,
-    types::*,
+use bob_chat::{
+    adapter::ChatAdapter,
+    card::CardElement,
+    error::ChatError,
+    event::ChatEvent,
+    message::{AdapterPostableMessage, Author, IncomingMessage, SentMessage},
 };
+use bob_core::{error::AgentError, ports::TapeStorePort, types::*};
 use bob_runtime::{
     AgentRuntime, NoOpToolPort,
     agent_loop::{AgentLoop, AgentLoopOutput},
@@ -64,31 +66,90 @@ impl AgentRuntime for StubRuntime {
 }
 
 // ---------------------------------------------------------------------------
-// Mock channel
+// Mock chat adapter
 // ---------------------------------------------------------------------------
 
-/// In-memory channel that feeds predetermined messages and collects responses.
-#[derive(Debug)]
-struct MockChannel {
-    messages: VecDeque<ChannelMessage>,
-    outputs: Arc<Mutex<Vec<ChannelOutput>>>,
+/// In-memory chat adapter that feeds predetermined events and collects posted messages.
+struct MockChatAdapter {
+    events: Mutex<VecDeque<ChatEvent>>,
+    posted: Arc<Mutex<Vec<String>>>,
+}
+
+impl std::fmt::Debug for MockChatAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockChatAdapter").finish_non_exhaustive()
+    }
 }
 
 #[async_trait]
-impl Channel for MockChannel {
-    async fn recv(&mut self) -> Option<ChannelMessage> {
-        self.messages.pop_front()
+impl ChatAdapter for MockChatAdapter {
+    #[expect(clippy::unnecessary_literal_bound)]
+    fn name(&self) -> &str {
+        "mock"
     }
 
-    async fn send(&self, output: ChannelOutput) -> Result<(), ChannelError> {
-        self.outputs.lock().push(output);
-        Ok(())
+    async fn recv_event(&mut self) -> Option<ChatEvent> {
+        self.events.lock().pop_front()
+    }
+
+    async fn post_message(
+        &self,
+        _thread_id: &str,
+        message: &AdapterPostableMessage,
+    ) -> Result<SentMessage, ChatError> {
+        let text = self.render_message(message);
+        self.posted.lock().push(text);
+        Ok(SentMessage {
+            id: "mock-sent".into(),
+            thread_id: "mock-thread".into(),
+            adapter_name: "mock".into(),
+            raw: None,
+        })
+    }
+
+    async fn edit_message(
+        &self,
+        _thread_id: &str,
+        _message_id: &str,
+        _message: &AdapterPostableMessage,
+    ) -> Result<SentMessage, ChatError> {
+        Err(ChatError::NotSupported("edit".into()))
+    }
+
+    async fn delete_message(&self, _thread_id: &str, _message_id: &str) -> Result<(), ChatError> {
+        Err(ChatError::NotSupported("delete".into()))
+    }
+
+    fn render_card(&self, _card: &CardElement) -> String {
+        String::new()
+    }
+
+    fn render_message(&self, message: &AdapterPostableMessage) -> String {
+        match message {
+            AdapterPostableMessage::Text(t) | AdapterPostableMessage::Markdown(t) => t.clone(),
+        }
     }
 }
 
-/// Create a `ChannelMessage` with default session and no sender.
-fn make_message(text: &str) -> ChannelMessage {
-    ChannelMessage { text: text.to_string(), session_id: "test-session".to_string(), sender: None }
+/// Create a `ChatEvent::Message` with default session and no sender.
+fn make_event(text: &str) -> ChatEvent {
+    ChatEvent::Message {
+        thread_id: "test-session".into(),
+        message: IncomingMessage {
+            id: "m1".into(),
+            text: text.to_string(),
+            author: Author {
+                user_id: "test-user".into(),
+                user_name: "tester".into(),
+                full_name: "Test User".into(),
+                is_bot: false,
+            },
+            attachments: vec![],
+            is_mention: false,
+            thread_id: "test-session".into(),
+            timestamp: None,
+        },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -226,27 +287,30 @@ async fn cmd_run_with_skill_composer() {
     assert!(result.is_ok(), "cmd_run with skill composer should succeed");
 }
 
-/// Exercise `run_channels` with a `MockChannel` that provides two messages
+/// Exercise `run_chatbot` with a `MockChatAdapter` that provides two messages
 /// then returns `None` (EOF). Both messages should be processed and
 /// responses collected.
 #[tokio::test]
-async fn channel_runner_with_mock_channel() {
+async fn chatbot_runner_with_mock_adapter() {
     let Some(memory_service) = make_memory_service() else { return };
     let context = Arc::new(build_test_context(memory_service));
 
-    let outputs: Arc<Mutex<Vec<ChannelOutput>>> = Arc::new(Mutex::new(Vec::new()));
-    let channel = MockChannel {
-        messages: VecDeque::from(vec![make_message("hello agent"), make_message("second message")]),
-        outputs: Arc::clone(&outputs),
+    let posted: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let adapter = MockChatAdapter {
+        events: Mutex::new(VecDeque::from(vec![
+            make_event("hello agent"),
+            make_event("second message"),
+        ])),
+        posted: Arc::clone(&posted),
     };
 
-    let channels: Vec<Box<dyn Channel>> = vec![Box::new(channel)];
-    let result = run_channels(context, channels).await;
-    assert!(result.is_ok(), "channel runner should complete without error");
+    let adapters: Vec<Box<dyn ChatAdapter>> = vec![Box::new(adapter)];
+    let result = run_chatbot(context, adapters).await;
+    assert!(result.is_ok(), "chatbot runner should complete without error");
 
-    let collected = outputs.lock();
+    let collected = posted.lock();
     assert_eq!(collected.len(), 2, "both messages should produce a response");
-    assert!(collected.iter().all(|o| !o.is_error), "no response should be an error");
+    assert!(collected.iter().all(|o| !o.is_empty()), "no response should be empty");
 }
 
 /// Build a context with all optional components populated and verify every
