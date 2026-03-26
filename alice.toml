@@ -4,6 +4,13 @@ max_steps = 12
 turn_timeout_ms = 90000
 dispatch_mode = "native_preferred"
 
+# Agent backend selection: "bob" (default) or "acp" (requires --features acp-agent).
+# [agent]
+# backend = "bob"
+# acp_command = "claude-agent-acp"
+# acp_args = []
+# acp_working_dir = "."
+
 [memory]
 db_path = "./.alice/memory.db"
 recall_limit = 6

@@ -1,10 +1,6 @@
 //! Unified input handler with slash command routing, skill injection, and memory.
 
-use bob_core::types::AgentRunResult;
-use bob_runtime::{
-    agent_loop::AgentLoopOutput,
-    router::{self, RouteResult},
-};
+use bob_runtime::agent_loop::AgentLoopOutput;
 
 use crate::{context::AliceRuntimeContext, memory_context::run_turn_with_memory};
 
@@ -27,16 +23,20 @@ pub async fn handle_input_with_skills(
     }
 
     // Route: slash command or natural language
-    match router::route(trimmed) {
-        RouteResult::SlashCommand(_) => {
+    match bob_runtime::router::route(trimmed) {
+        bob_runtime::router::RouteResult::SlashCommand(_) => {
             // Delegate slash commands to AgentLoop for deterministic handling
             let output = context.agent_loop.handle_input(trimmed, session_id).await?;
             Ok(output)
         }
-        RouteResult::NaturalLanguage(_) => {
-            // NL input: memory + skills + runtime
+        bob_runtime::router::RouteResult::NaturalLanguage(_) => {
+            // NL input: memory + skills + runtime via agent backend
             let response = run_turn_with_memory(context, session_id, trimmed).await?;
-            Ok(AgentLoopOutput::Response(AgentRunResult::Finished(response)))
+            if response.is_quit {
+                return Ok(AgentLoopOutput::Quit);
+            }
+            // Convert bob_runtime::AgentResponse → AgentLoopOutput
+            Ok(AgentLoopOutput::CommandOutput(response.content))
         }
     }
 }
@@ -44,7 +44,9 @@ pub async fn handle_input_with_skills(
 /// Extract displayable text from an `AgentLoopOutput`.
 pub fn output_to_text(output: &AgentLoopOutput) -> Option<&str> {
     match output {
-        AgentLoopOutput::Response(AgentRunResult::Finished(resp)) => Some(&resp.content),
+        AgentLoopOutput::Response(bob_core::types::AgentRunResult::Finished(resp)) => {
+            Some(&resp.content)
+        }
         AgentLoopOutput::CommandOutput(text) => Some(text),
         AgentLoopOutput::Quit => None,
     }

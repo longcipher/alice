@@ -9,6 +9,9 @@ use serde::Deserialize;
 pub struct AliceConfig {
     /// Runtime behavior settings.
     pub runtime: RuntimeConfig,
+    /// Agent backend selection.
+    #[serde(default)]
+    pub agent: AgentBackendConfig,
     /// Memory subsystem settings.
     #[serde(default)]
     pub memory: MemoryConfig,
@@ -44,6 +47,32 @@ pub enum DispatchMode {
     PromptGuided,
     /// Native tool-calling first, fallback to prompt-guided.
     NativePreferred,
+}
+
+/// Agent backend type.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentBackendType {
+    /// Bob-runtime Agent/Session (default).
+    #[default]
+    Bob,
+    /// Agent Client Protocol — delegates to an external ACP agent subprocess.
+    Acp,
+}
+
+/// Agent backend configuration.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AgentBackendConfig {
+    /// Which backend to use.
+    #[serde(default)]
+    pub backend: AgentBackendType,
+    /// ACP agent command (only used when backend is "acp").
+    pub acp_command: Option<String>,
+    /// ACP agent arguments.
+    #[serde(default)]
+    pub acp_args: Vec<String>,
+    /// ACP agent working directory.
+    pub acp_working_dir: Option<String>,
 }
 
 /// Memory subsystem settings.

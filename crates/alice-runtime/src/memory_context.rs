@@ -1,8 +1,7 @@
 //! Turn execution helpers with memory recall/writeback and skill injection.
 
-use bob_core::types::{
-    AgentRequest, AgentResponse, AgentRunResult, RequestContext, RequestToolPolicy,
-};
+use bob_core::types::{RequestContext, RequestToolPolicy};
+use bob_runtime::AgentResponse;
 
 use crate::context::AliceRuntimeContext;
 
@@ -60,19 +59,16 @@ pub async fn run_turn_with_memory(
         (Vec::new(), RequestToolPolicy::default())
     };
 
-    let request = AgentRequest {
-        input: input.to_string(),
-        session_id: session_id.to_string(),
-        model: Some(context.default_model.clone()),
-        context: RequestContext { system_prompt, selected_skills, tool_policy },
-        cancel_token: None,
-    };
+    let request_context = RequestContext { system_prompt, selected_skills, tool_policy };
 
-    let result = context.runtime.run(request).await?;
-    let AgentRunResult::Finished(response) = result;
+    // 5. Execute turn via agent backend
+    let session = context.backend.create_session_with_id(session_id);
+    let response = session.chat(input, request_context).await?;
 
+    // 6. Persist memory
     if let Err(error) = context.memory_service.persist_turn(session_id, input, &response.content) {
         tracing::warn!("memory persistence failed: {error}");
     }
+
     Ok(response)
 }

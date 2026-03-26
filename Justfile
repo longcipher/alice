@@ -14,7 +14,6 @@ fix:
 
 # Run all lints
 lint:
-  typos
   rumdl check .
   taplo fmt --check
   cargo +nightly fmt --all -- --check
@@ -23,7 +22,7 @@ lint:
 
 # Run tests
 test:
-  cargo test --all-features
+  cargo nextest run --all-features
 
 # Run tests with coverage
 test-coverage:

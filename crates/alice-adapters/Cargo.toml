@@ -2,12 +2,20 @@
 name = "alice-adapters"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+authors.workspace = true
+description = "Adapter implementations for the Alice AI agent — SQLite memory store, channel adapters"
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-alice-core = { path = "../alice-core" }
+alice-core = { workspace = true }
 async-trait.workspace = true
 bob-chat.workspace = true
 eyre = { workspace = true, optional = true }

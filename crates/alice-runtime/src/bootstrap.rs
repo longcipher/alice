@@ -8,17 +8,15 @@ use bob_adapters::{
     llm_genai::GenAiLlmAdapter, mcp_rmcp::McpToolAdapter, observe::TracingEventSink,
     store_memory::InMemorySessionStore, tape_memory::InMemoryTapeStore,
 };
-use bob_core::{
-    ports::{EventSink, LlmPort, SessionStore, TapeStorePort, ToolPort},
-    types::TurnPolicy,
-};
+use bob_core::ports::{EventSink, LlmPort, SessionStore, TapeStorePort, ToolPort};
 use bob_runtime::{
-    AgentBootstrap, DispatchMode, NoOpToolPort, RuntimeBuilder, TimeoutToolLayer, ToolLayer,
+    Agent, AgentBootstrap, DispatchMode, NoOpToolPort, RuntimeBuilder, TimeoutToolLayer, ToolLayer,
     agent_loop::AgentLoop, composite::CompositeToolPort,
 };
 
 use crate::{
-    config::{AliceConfig, DispatchMode as ConfigDispatchMode, McpServerConfig},
+    agent_backend::AgentBackend,
+    config::{AgentBackendType, AliceConfig, DispatchMode as ConfigDispatchMode, McpServerConfig},
     context::AliceRuntimeContext,
 };
 
@@ -39,26 +37,33 @@ pub async fn build_runtime(cfg: &AliceConfig) -> eyre::Result<AliceRuntimeContex
     let events: Arc<dyn EventSink> = Arc::new(TracingEventSink::new());
     let tape: Arc<dyn TapeStorePort> = Arc::new(InMemoryTapeStore::new());
 
-    let policy = TurnPolicy {
+    let policy = bob_core::types::TurnPolicy {
         max_steps: cfg.runtime.max_steps.unwrap_or(DEFAULT_MAX_STEPS),
         turn_timeout_ms: cfg.runtime.turn_timeout_ms.unwrap_or(DEFAULT_TURN_TIMEOUT_MS),
         tool_timeout_ms: DEFAULT_TOOL_TIMEOUT_MS,
-        ..TurnPolicy::default()
+        ..bob_core::types::TurnPolicy::default()
     };
 
     let runtime = RuntimeBuilder::new()
         .with_llm(llm)
         .with_tools(tools)
-        .with_store(store)
+        .with_store(store.clone())
         .with_events(events.clone())
         .with_default_model(cfg.runtime.default_model.clone())
         .with_policy(policy)
         .with_dispatch_mode(resolve_dispatch_mode(cfg.runtime.dispatch_mode))
         .build()?;
 
-    let agent_loop = AgentLoop::new(runtime.clone(), tools_ref.clone())
+    // Build Agent + Session API (bob 0.2.2)
+    let agent = Agent::from_runtime(runtime.clone(), tools_ref.clone())
+        .with_store(store)
         .with_tape(tape.clone())
-        .with_events(events);
+        .build();
+
+    let agent_loop = AgentLoop::new(runtime, tools_ref.clone()).with_tape(tape).with_events(events);
+
+    // Build agent backend based on configuration
+    let backend: Arc<dyn AgentBackend> = build_agent_backend(cfg, &agent)?;
 
     let memory_store = SqliteMemoryStore::open(
         &cfg.memory.db_path,
@@ -78,14 +83,47 @@ pub async fn build_runtime(cfg: &AliceConfig) -> eyre::Result<AliceRuntimeContex
 
     Ok(AliceRuntimeContext {
         agent_loop,
-        runtime,
-        tools: tools_ref,
-        tape,
+        agent,
+        backend,
         memory_service,
         skill_composer,
         skill_token_budget: cfg.skills.token_budget,
         default_model: cfg.runtime.default_model.clone(),
     })
+}
+
+/// Build the appropriate agent backend from configuration.
+fn build_agent_backend(cfg: &AliceConfig, agent: &Agent) -> eyre::Result<Arc<dyn AgentBackend>> {
+    match cfg.agent.backend {
+        AgentBackendType::Bob => {
+            let backend = crate::agent_backend::bob_backend::BobAgentBackend::new(agent.clone());
+            Ok(Arc::new(backend))
+        }
+        AgentBackendType::Acp => {
+            #[cfg(feature = "acp-agent")]
+            {
+                let command =
+                    cfg.agent.acp_command.clone().ok_or_else(|| {
+                        eyre::eyre!("agent.acp_command is required for acp backend")
+                    })?;
+                let config = crate::agent_backend::acp_backend::AcpConfig {
+                    command,
+                    args: cfg.agent.acp_args.clone(),
+                    working_dir: cfg.agent.acp_working_dir.clone(),
+                };
+                let backend = crate::agent_backend::acp_backend::AcpAgentBackend::new(config);
+                Ok(Arc::new(backend))
+            }
+            #[cfg(not(feature = "acp-agent"))]
+            {
+                let _ = agent;
+                Err(eyre::eyre!(
+                    "acp backend requires the 'acp-agent' feature; \
+                     rebuild with --features acp-agent"
+                ))
+            }
+        }
+    }
 }
 
 const fn resolve_dispatch_mode(mode: Option<ConfigDispatchMode>) -> DispatchMode {
@@ -133,10 +171,14 @@ async fn build_single_tool_port(server: &McpServerConfig) -> eyre::Result<Arc<dy
 mod tests {
     use super::*;
     use crate::config::{
-        AliceConfig, ChannelsConfig, McpConfig, MemoryConfig, RuntimeConfig, SkillsConfig,
+        AgentBackendConfig, AliceConfig, ChannelsConfig, McpConfig, MemoryConfig, RuntimeConfig,
+        SkillsConfig,
     };
 
     fn base_config() -> AliceConfig {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(1);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         AliceConfig {
             runtime: RuntimeConfig {
                 default_model: "openai:gpt-4o-mini".to_string(),
@@ -144,11 +186,13 @@ mod tests {
                 turn_timeout_ms: Some(10_000),
                 dispatch_mode: Some(ConfigDispatchMode::PromptGuided),
             },
+            agent: AgentBackendConfig::default(),
             memory: MemoryConfig {
                 db_path: format!(
-                    "{}/alice-bootstrap-test-{}.db",
+                    "{}/alice-bootstrap-test-{}-{}.db",
                     std::env::temp_dir().display(),
-                    std::process::id()
+                    std::process::id(),
+                    n
                 ),
                 ..MemoryConfig::default()
             },
@@ -165,6 +209,27 @@ mod tests {
         assert!(built.is_ok(), "runtime should build without mcp");
         let Ok(built) = built else { return };
         assert_eq!(built.default_model, "openai:gpt-4o-mini");
+    }
+
+    #[tokio::test]
+    async fn build_runtime_with_bob_backend() {
+        let cfg = base_config();
+        let built = build_runtime(&cfg).await;
+        assert!(built.is_ok(), "runtime should build with bob backend");
+    }
+
+    #[cfg(feature = "acp-agent")]
+    #[tokio::test]
+    async fn build_runtime_with_acp_backend() {
+        let mut cfg = base_config();
+        cfg.agent = AgentBackendConfig {
+            backend: AgentBackendType::Acp,
+            acp_command: Some("mock-agent".to_string()),
+            acp_args: vec![],
+            acp_working_dir: None,
+        };
+        let built = build_runtime(&cfg).await;
+        assert!(built.is_ok(), "runtime should build with acp backend");
     }
 
     #[test]

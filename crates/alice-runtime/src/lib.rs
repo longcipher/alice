@@ -3,6 +3,7 @@
 //! Configuration, bootstrap, context, and command implementations
 //! for the Alice agent.
 
+pub mod agent_backend;
 pub mod bootstrap;
 pub mod chatbot_runner;
 pub mod commands;

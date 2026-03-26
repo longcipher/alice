@@ -169,14 +169,27 @@ fn build_test_context_with_skills(
     let runtime: Arc<dyn AgentRuntime> = Arc::new(StubRuntime);
     let tools: Arc<dyn bob_core::ports::ToolPort> = Arc::new(NoOpToolPort);
     let tape: Arc<dyn TapeStorePort> = Arc::new(InMemoryTapeStore::new());
+    let session_store: Arc<dyn bob_core::ports::SessionStore> =
+        Arc::new(bob_adapters::store_memory::InMemorySessionStore::new());
+    let events: Arc<dyn bob_core::ports::EventSink> =
+        Arc::new(bob_adapters::observe::TracingEventSink::new());
 
-    let agent_loop = AgentLoop::new(runtime.clone(), tools.clone()).with_tape(tape.clone());
+    let agent_loop = AgentLoop::new(runtime.clone(), tools.clone())
+        .with_tape(tape.clone())
+        .with_events(events.clone());
+
+    let agent = bob_runtime::Agent::from_runtime(runtime, tools.clone())
+        .with_store(session_store)
+        .with_tape(tape)
+        .build();
+
+    let backend: Arc<dyn alice_runtime::agent_backend::AgentBackend> =
+        Arc::new(alice_runtime::agent_backend::bob_backend::BobAgentBackend::new(agent.clone()));
 
     AliceRuntimeContext {
         agent_loop,
-        runtime,
-        tools,
-        tape,
+        agent,
+        backend,
         memory_service: Arc::new(memory_service),
         skill_composer,
         skill_token_budget: 1800,
@@ -343,7 +356,7 @@ async fn full_context_with_all_components() {
     );
 
     // Tape store should be functional.
-    let health = context.runtime.health().await;
+    let health = context.agent.runtime().health().await;
     assert!(matches!(health.status, HealthStatus::Healthy), "runtime health should be healthy");
 
     // Agent loop should handle a slash command.
@@ -372,7 +385,7 @@ async fn handle_input_with_skills_nl_input() {
     assert!(output.is_ok(), "handle_input_with_skills should succeed for NL input");
     let Ok(output) = output else { return };
     assert!(
-        matches!(output, AgentLoopOutput::Response(_)),
-        "NL input should return AgentLoopOutput::Response, got: {output:?}"
+        matches!(output, AgentLoopOutput::CommandOutput(_)),
+        "NL input should return AgentLoopOutput::CommandOutput, got: {output:?}"
     );
 }

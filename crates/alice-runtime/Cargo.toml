@@ -2,29 +2,48 @@
 name = "alice-runtime"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+authors.workspace = true
+description = "Runtime wiring layer for the Alice AI agent — config, bootstrap, commands, skill system"
+keywords.workspace = true
+categories.workspace = true
 
 [lints]
 workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["bob-skills"]
+
 [dependencies]
-alice-adapters = { path = "../alice-adapters" }
-alice-core = { path = "../alice-core" }
+alice-adapters = { workspace = true }
+alice-core = { workspace = true }
+async-trait.workspace = true
 bob-adapters.workspace = true
 bob-chat.workspace = true
 bob-core.workspace = true
 bob-runtime.workspace = true
+bob-skills.workspace = true
 config.workspace = true
 eyre.workspace = true
-futures-util = "0.3.32"
+futures-util = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
     "io-util",
+    "process",
 ] }
 tracing.workspace = true
 
+# ACP agent backend dependencies
+agent-client-protocol = { workspace = true, optional = true }
+tokio-util = { workspace = true, features = ["compat"], optional = true }
+
 [features]
+acp-agent = ["dep:agent-client-protocol", "dep:tokio-util"]
 discord = ["alice-adapters/discord"]
 telegram = ["alice-adapters/telegram"]
 

@@ -2,21 +2,29 @@
 name = "alice-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "CLI binary for the Alice AI agent"
+keywords.workspace = true
+categories.workspace = true
+publish = false
 
 [[bin]]
 name = "alice"
 path = "src/main.rs"
 
 [dependencies]
-alice-runtime = { path = "../../crates/alice-runtime" }
+alice-runtime = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 eyre.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
-alice-adapters = { path = "../../crates/alice-adapters" }
-alice-core = { path = "../../crates/alice-core" }
+alice-adapters = { workspace = true }
+alice-core = { workspace = true }
 async-trait.workspace = true
 bob-adapters.workspace = true
 bob-chat.workspace = true

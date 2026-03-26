@@ -8,7 +8,10 @@ use std::{collections::VecDeque, sync::Arc};
 
 use alice_adapters::memory::sqlite_store::SqliteMemoryStore;
 use alice_core::memory::{domain::HybridWeights, service::MemoryService};
-use alice_runtime::{chatbot_runner::run_chatbot, context::AliceRuntimeContext};
+use alice_runtime::{
+    agent_backend::bob_backend::BobAgentBackend, chatbot_runner::run_chatbot,
+    context::AliceRuntimeContext,
+};
 use async_trait::async_trait;
 use bob_adapters::tape_memory::InMemoryTapeStore;
 use bob_chat::{
@@ -129,13 +132,27 @@ fn build_test_context() -> Option<AliceRuntimeContext> {
     let runtime: Arc<dyn AgentRuntime> = Arc::new(StubRuntime);
     let tools: Arc<dyn bob_core::ports::ToolPort> = Arc::new(NoOpToolPort);
     let tape: Arc<dyn TapeStorePort> = Arc::new(InMemoryTapeStore::new());
-    let agent_loop = AgentLoop::new(runtime.clone(), tools.clone()).with_tape(tape.clone());
+    let session_store: Arc<dyn bob_core::ports::SessionStore> =
+        Arc::new(bob_adapters::store_memory::InMemorySessionStore::new());
+    let events: Arc<dyn bob_core::ports::EventSink> =
+        Arc::new(bob_adapters::observe::TracingEventSink::new());
+
+    let agent_loop = AgentLoop::new(runtime.clone(), tools.clone())
+        .with_tape(tape.clone())
+        .with_events(events.clone());
+
+    let agent = bob_runtime::Agent::from_runtime(runtime, tools.clone())
+        .with_store(session_store)
+        .with_tape(tape)
+        .build();
+
+    let backend: Arc<dyn alice_runtime::agent_backend::AgentBackend> =
+        Arc::new(BobAgentBackend::new(agent.clone()));
 
     Some(AliceRuntimeContext {
         agent_loop,
-        runtime,
-        tools,
-        tape,
+        agent,
+        backend,
         memory_service: Arc::new(memory_service),
         skill_composer: None,
         skill_token_budget: 1800,
