@@ -1,5 +1,12 @@
 # Alice
 
+[![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/longcipher/alice)
+[![Context7](https://img.shields.io/badge/Website-context7.com-blue)](https://context7.com/longcipher/alice)
+[![crates.io](https://img.shields.io/crates/v/alice-core.svg)](https://crates.io/crates/alice-core)
+[![docs.rs](https://docs.rs/alice-core/badge.svg)](https://docs.rs/alice-core)
+
+![alice](https://socialify.git.ci/longcipher/alice/image?font=Source+Code+Pro&language=1&name=1&owner=1&pattern=Circuit+Board&theme=Auto)
+
 A configurable AI agent application with pluggable backends, built with hexagonal architecture on top of the [Bob](https://github.com/longcipher/bob) framework.
 
 ## Architecture
