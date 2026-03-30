@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Bob Liu <akagi201@gmail.com>"]
@@ -15,28 +15,29 @@ resolver = "3"
 
 [workspace.dependencies]
 # local crates
-alice-adapters = { path = "crates/alice-adapters", version = "0.1.1" }
-alice-cli = { path = "crates/alice-cli", version = "0.1.1" }
-alice-core = { path = "crates/alice-core", version = "0.1.1" }
-alice-runtime = { path = "crates/alice-runtime", version = "0.1.1" }
+alice-adapters = { path = "crates/alice-adapters", version = "0.1.2" }
+alice-cli = { path = "crates/alice-cli", version = "0.1.2" }
+alice-core = { path = "crates/alice-core", version = "0.1.2" }
+alice-runtime = { path = "crates/alice-runtime", version = "0.1.2" }
 
 # external crates
 agent-client-protocol = "0.10.3"
 async-trait = "0.1.89"
-bob-adapters = "0.3.0"
-bob-chat = "0.3.0"
-bob-core = "0.3.0"
-bob-runtime = "0.3.0"
-bob-skills = "0.3.0"
+bob-adapters = "0.3.1"
+bob-chat = "0.3.1"
+bob-core = "0.3.1"
+bob-runtime = "0.3.1"
+bob-skills = "0.3.1"
 clap = "4.6.0"
 config = "0.15.22"
 eyre = "0.6.12"
 futures-util = "0.3.32"
+liter-llm = "1.1.1"
 parking_lot = "0.12.5"
 rusqlite = "0.39.0"
 serde = "1.0.228"
 serde_json = "1.0.149"
-sqlite-vec = "0.1.7"
+sqlite-vec = "0.1.8"
 thiserror = "2.0.18"
 tokio = "1.50.0"
 tokio-util = "0.7.18"

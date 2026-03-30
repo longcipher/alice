@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alice_adapters::memory::sqlite_store::SqliteMemoryStore;
 use alice_core::memory::{domain::HybridWeights, service::MemoryService};
 use bob_adapters::{
-    llm_genai::GenAiLlmAdapter, mcp_rmcp::McpToolAdapter, observe::TracingEventSink,
+    llm_liter::LiterLlmAdapter, mcp_rmcp::McpToolAdapter, observe::TracingEventSink,
     store_memory::InMemorySessionStore, tape_memory::InMemoryTapeStore,
 };
 use bob_core::ports::{EventSink, LlmPort, SessionStore, TapeStorePort, ToolPort};
@@ -24,13 +24,28 @@ const DEFAULT_MAX_STEPS: u32 = 12;
 const DEFAULT_TURN_TIMEOUT_MS: u64 = 90_000;
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 15_000;
 
+/// Convert a model identifier from the `provider:model` format (used by the
+/// bob runtime config) to the `provider/model` format expected by `liter_llm`.
+fn normalize_model_name(model: &str) -> String {
+    if let Some((provider, rest)) = model.split_once(':') {
+        format!("{provider}/{rest}")
+    } else {
+        model.to_string()
+    }
+}
+
 /// Build runtime context from configuration.
 ///
 /// # Errors
 ///
 /// Returns an error if any adapter fails to initialize.
 pub async fn build_runtime(cfg: &AliceConfig) -> eyre::Result<AliceRuntimeContext> {
-    let llm: Arc<dyn LlmPort> = Arc::new(GenAiLlmAdapter::new(Default::default()));
+    let default_model = normalize_model_name(&cfg.runtime.default_model);
+
+    let config = liter_llm::ClientConfig::new("");
+    let client = liter_llm::DefaultClient::new(config, None)
+        .map_err(|e| eyre::eyre!("failed to create liter-llm client: {e}"))?;
+    let llm: Arc<dyn LlmPort> = Arc::new(LiterLlmAdapter::new(Arc::new(client)));
     let tools = build_tool_port(cfg).await?;
     let tools_ref = tools.clone();
     let store: Arc<dyn SessionStore> = Arc::new(InMemorySessionStore::new());
@@ -49,7 +64,7 @@ pub async fn build_runtime(cfg: &AliceConfig) -> eyre::Result<AliceRuntimeContex
         .with_tools(tools)
         .with_store(store.clone())
         .with_events(events.clone())
-        .with_default_model(cfg.runtime.default_model.clone())
+        .with_default_model(default_model.clone())
         .with_policy(policy)
         .with_dispatch_mode(resolve_dispatch_mode(cfg.runtime.dispatch_mode))
         .build()?;
@@ -88,7 +103,7 @@ pub async fn build_runtime(cfg: &AliceConfig) -> eyre::Result<AliceRuntimeContex
         memory_service,
         skill_composer,
         skill_token_budget: cfg.skills.token_budget,
-        default_model: cfg.runtime.default_model.clone(),
+        default_model,
     })
 }
 
@@ -208,7 +223,7 @@ mod tests {
         let built = build_runtime(&cfg).await;
         assert!(built.is_ok(), "runtime should build without mcp");
         let Ok(built) = built else { return };
-        assert_eq!(built.default_model, "openai:gpt-4o-mini");
+        assert_eq!(built.default_model, "openai/gpt-4o-mini");
     }
 
     #[tokio::test]
@@ -243,5 +258,25 @@ mod tests {
             DispatchMode::NativePreferred
         );
         assert_eq!(resolve_dispatch_mode(None), DispatchMode::NativePreferred);
+    }
+
+    #[test]
+    fn normalize_model_name_converts_colon_to_slash() {
+        assert_eq!(normalize_model_name("openai:gpt-4o-mini"), "openai/gpt-4o-mini");
+        assert_eq!(
+            normalize_model_name("anthropic:claude-sonnet-4-20250514"),
+            "anthropic/claude-sonnet-4-20250514"
+        );
+        assert_eq!(normalize_model_name("groq:llama3-70b"), "groq/llama3-70b");
+    }
+
+    #[test]
+    fn normalize_model_name_preserves_slash_format() {
+        assert_eq!(normalize_model_name("openai/gpt-4o-mini"), "openai/gpt-4o-mini");
+    }
+
+    #[test]
+    fn normalize_model_name_preserves_bare_model() {
+        assert_eq!(normalize_model_name("gpt-4o-mini"), "gpt-4o-mini");
     }
 }

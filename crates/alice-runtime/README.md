@@ -9,7 +9,7 @@ This crate is the composition root that wires all components together:
 - **Configuration** — TOML-based config with `alice.toml` via the `config` crate
 - **Bootstrap** — builds the full runtime context from configuration
 - **Agent backends** — pluggable `AgentBackend` trait with two implementations:
-  - `BobAgentBackend` — built-in Bob runtime with genai LLM adapter
+  - `BobAgentBackend` — built-in Bob runtime with liter-llm adapter
   - `AcpAgentBackend` — external agent via Agent Client Protocol (feature-gated)
 - **Chat adapter runner** — event loop for CLI, Discord, and Telegram channels
 - **Skill system** — dynamic SKILL.md loading and per-turn skill injection

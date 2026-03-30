@@ -29,6 +29,7 @@ bob-skills.workspace = true
 config.workspace = true
 eyre.workspace = true
 futures-util = { workspace = true }
+liter-llm.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = [
     "macros",

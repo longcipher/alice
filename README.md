@@ -49,7 +49,7 @@ Alice supports two agent backends, selectable via configuration:
 
 | Backend | Description | Use Case |
 |---------|-------------|----------|
-| `bob` (default) | Built-in Bob runtime with genai LLM adapter and MCP tools | Self-contained agent, no external process needed |
+| `bob` (default) | Built-in Bob runtime with liter-llm adapter and MCP tools | Self-contained agent, no external process needed |
 | `acp` | Delegates to an external agent via [Agent Client Protocol](https://agentclientprotocol.com) | Use any ACP-compatible agent (OpenCode, Claude Code, Codex, etc.) |
 
 ### Agent Client Protocol (ACP)

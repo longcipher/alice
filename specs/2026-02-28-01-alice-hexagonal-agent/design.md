@@ -95,7 +95,7 @@ CLI subcommands (run / chat / channel)
 | `InMemoryTapeStore` | `bob-adapters::tape_memory` | `scc::HashMap`-backed tape store |
 | `CompositeToolPort` | `bob-runtime::composite` | Multi-namespace tool composition |
 | `RuntimeBuilder` | `bob-runtime` | LLM/tools/store/events -> `AgentRuntime` |
-| `GenAiLlmAdapter` | `bob-adapters::llm_genai` | LLM provider adapter |
+| `LiterLlmAdapter` | `bob-adapters::llm_liter` | LLM provider adapter |
 | `McpToolAdapter` | `bob-adapters::mcp_rmcp` | MCP stdio tool servers |
 | `TracingEventSink` | `bob-adapters::observe` | Event observability |
 | `InMemorySessionStore` | `bob-adapters::store_memory` | Session state |
