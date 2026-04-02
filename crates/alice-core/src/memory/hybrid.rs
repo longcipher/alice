@@ -1,9 +1,8 @@
 //! Hybrid retrieval helpers.
 
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-};
+use std::hash::{Hash, Hasher};
+
+use ahash::AHasher;
 
 use crate::memory::domain::HybridWeights;
 
@@ -52,7 +51,7 @@ pub fn simple_text_embedding(text: &str, dimensions: usize) -> Vec<f32> {
     let mut output = vec![0.0_f32; dims];
 
     for token in text.split_whitespace().map(str::trim).filter(|token| token.len() >= 2) {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = AHasher::default();
         token.hash(&mut hasher);
         let hash = hasher.finish();
         let idx = (hash as usize) % dims;

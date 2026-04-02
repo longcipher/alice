@@ -26,7 +26,7 @@ pub async fn handle_input_with_skills(
     match bob_runtime::router::route(trimmed) {
         bob_runtime::router::RouteResult::SlashCommand(_) => {
             // Delegate slash commands to AgentLoop for deterministic handling
-            let output = context.agent_loop.handle_input(trimmed, session_id).await?;
+            let output = context.agent_loop().handle_input(trimmed, session_id).await?;
             Ok(output)
         }
         bob_runtime::router::RouteResult::NaturalLanguage(_) => {

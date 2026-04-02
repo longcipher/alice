@@ -27,12 +27,18 @@ impl MemoryImportance {
     }
 
     /// Deserialize from storage string.
-    #[must_use]
-    pub fn from_db(value: &str) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string does not match a known importance level.
+    pub fn from_db(value: &str) -> Result<Self, crate::memory::error::MemoryValidationError> {
         match value {
-            "low" => Self::Low,
-            "high" => Self::High,
-            _ => Self::Medium,
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            _ => Err(crate::memory::error::MemoryValidationError::InvalidImportance(
+                value.to_string(),
+            )),
         }
     }
 }
@@ -131,10 +137,10 @@ mod tests {
     #[test]
     fn memory_importance_from_db_roundtrip() {
         for variant in [MemoryImportance::Low, MemoryImportance::Medium, MemoryImportance::High] {
-            assert_eq!(MemoryImportance::from_db(variant.as_str()), variant);
+            assert_eq!(MemoryImportance::from_db(variant.as_str()), Ok(variant));
         }
-        // Unknown strings fall back to Medium.
-        assert_eq!(MemoryImportance::from_db("unknown"), MemoryImportance::Medium);
+        // Unknown strings return an error.
+        assert!(MemoryImportance::from_db("unknown").is_err());
     }
 
     /// `MemoryEntry` fields are stored exactly as provided.

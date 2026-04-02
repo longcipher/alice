@@ -96,15 +96,15 @@ pub async fn build_runtime(cfg: &AliceConfig) -> eyre::Result<AliceRuntimeContex
 
     let skill_composer = crate::skill_wiring::build_skill_composer(&cfg.skills)?;
 
-    Ok(AliceRuntimeContext {
+    Ok(AliceRuntimeContext::new(
         agent_loop,
         agent,
         backend,
         memory_service,
         skill_composer,
-        skill_token_budget: cfg.skills.token_budget,
+        cfg.skills.token_budget,
         default_model,
-    })
+    ))
 }
 
 /// Build the appropriate agent backend from configuration.
@@ -223,7 +223,7 @@ mod tests {
         let built = build_runtime(&cfg).await;
         assert!(built.is_ok(), "runtime should build without mcp");
         let Ok(built) = built else { return };
-        assert_eq!(built.default_model, "openai/gpt-4o-mini");
+        assert_eq!(built.default_model(), "openai/gpt-4o-mini");
     }
 
     #[tokio::test]

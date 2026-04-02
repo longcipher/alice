@@ -14,6 +14,9 @@ pub enum MemoryValidationError {
     /// Recall limit must be positive.
     #[error("recall limit must be greater than zero")]
     InvalidRecallLimit,
+    /// Unknown importance level from storage.
+    #[error("unknown memory importance level: {0}")]
+    InvalidImportance(String),
 }
 
 /// Storage adapter failures.

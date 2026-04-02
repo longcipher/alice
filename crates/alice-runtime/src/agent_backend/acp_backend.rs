@@ -30,7 +30,7 @@ use std::sync::{
 use agent_client_protocol as acp;
 use bob_core::types::{FinishReason, RequestContext, TokenUsage};
 use bob_runtime::AgentResponse;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::{AgentBackend, AgentSession};
@@ -44,11 +44,23 @@ static ACP_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// Implements `acp::Client` to receive streaming updates from the agent
 /// subprocess. This must be `!Send` because ACP connections are pinned
 /// to a single-threaded `LocalSet`.
-struct AliceAcpClient;
+struct AliceAcpClient {
+    content: Mutex<String>,
+}
 
 impl AliceAcpClient {
-    const fn new() -> Self {
-        Self
+    fn new() -> Self {
+        Self { content: Mutex::new(String::new()) }
+    }
+
+    async fn append_content(&self, text: &str) {
+        let mut content = self.content.lock().await;
+        content.push_str(text);
+    }
+
+    async fn take_content(&self) -> String {
+        let mut content = self.content.lock().await;
+        std::mem::take(&mut *content)
     }
 }
 
@@ -76,9 +88,12 @@ impl acp::Client for AliceAcpClient {
         )))
     }
 
-    async fn session_notification(&self, _args: acp::SessionNotification) -> acp::Result<()> {
-        // Streaming updates are logged by the ACP protocol layer.
-        // Future work: accumulate message chunks into the response content.
+    async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
+        if let acp::SessionUpdate::AgentMessageChunk(chunk) = &args.update {
+            if let acp::ContentBlock::Text(text_content) = &chunk.content {
+                self.append_content(&text_content.text).await;
+            }
+        }
         Ok(())
     }
 }
@@ -212,17 +227,9 @@ async fn run_session_local(
 ) {
     tracing::info!(session_id, command = %config.command, "ACP session starting");
 
-    // Build the shell command string
-    let full_cmd = if config.args.is_empty() {
-        config.command.clone()
-    } else {
-        format!("{} {}", config.command, config.args.join(" "))
-    };
-
-    // Spawn subprocess
-    let mut child = match tokio::process::Command::new("bash")
-        .arg("-lc")
-        .arg(&full_cmd)
+    // Spawn subprocess directly without shell interpolation
+    let mut child = match tokio::process::Command::new(&config.command)
+        .args(&config.args)
         .current_dir(config.working_dir.as_deref().unwrap_or("."))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -266,11 +273,12 @@ async fn run_session_local(
         }
     });
 
-    // Create ACP client + connection
-    let client = AliceAcpClient::new();
-    let (conn, handle_io) = acp::ClientSideConnection::new(client, stdin, stdout, |fut| {
-        tokio::task::spawn_local(fut);
-    });
+    // Create ACP client wrapped in Arc for shared access
+    let client = Arc::new(AliceAcpClient::new());
+    let (conn, handle_io) =
+        acp::ClientSideConnection::new(Arc::clone(&client), stdin, stdout, |fut| {
+            tokio::task::spawn_local(fut);
+        });
 
     // Spawn the IO handler
     let sid = session_id.clone();
@@ -321,7 +329,7 @@ async fn run_session_local(
     // Command loop
     while let Some(cmd) = cmd_rx.recv().await {
         let SessionCmd::Prompt { text, context, result_tx } = cmd;
-        let response = handle_prompt(&conn, &acp_session_id, &text, &context).await;
+        let response = handle_prompt(&conn, &client, &acp_session_id, &text, &context).await;
         let _ = result_tx.send(response);
     }
 
@@ -333,6 +341,7 @@ async fn run_session_local(
 /// Handle a single prompt: send to agent, return response.
 async fn handle_prompt(
     conn: &acp::ClientSideConnection,
+    client: &AliceAcpClient,
     acp_session_id: &acp::SessionId,
     text: &str,
     context: &RequestContext,
@@ -359,8 +368,10 @@ async fn handle_prompt(
             let reason = format!("{:?}", resp.stop_reason);
             tracing::info!(stop_reason = %reason, "ACP prompt completed");
 
+            let content = client.take_content().await;
+
             Ok(AgentResponse {
-                content: String::new(),
+                content,
                 usage: TokenUsage::default(),
                 finish_reason: FinishReason::Stop,
                 is_quit: false,

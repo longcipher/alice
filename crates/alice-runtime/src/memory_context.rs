@@ -16,7 +16,7 @@ pub async fn run_turn_with_memory(
     input: &str,
 ) -> eyre::Result<AgentResponse> {
     // 1. Memory recall
-    let recalled = match context.memory_service.recall_for_turn(session_id, input) {
+    let recalled = match context.memory_service().recall_for_turn(session_id, input) {
         Ok(hits) => hits,
         Err(error) => {
             tracing::warn!("memory recall failed: {error}");
@@ -27,8 +27,8 @@ pub async fn run_turn_with_memory(
         alice_core::memory::service::MemoryService::render_recall_context(&recalled);
 
     // 2. Skill injection
-    let skills_bundle = context.skill_composer.as_ref().map(|composer| {
-        crate::skill_wiring::inject_skills_context(composer, input, context.skill_token_budget)
+    let skills_bundle = context.skill_composer().map(|composer| {
+        crate::skill_wiring::inject_skills_context(composer, input, context.skill_token_budget())
     });
 
     // 3. Compose system prompt: memory + skills
@@ -62,11 +62,12 @@ pub async fn run_turn_with_memory(
     let request_context = RequestContext { system_prompt, selected_skills, tool_policy };
 
     // 5. Execute turn via agent backend
-    let session = context.backend.create_session_with_id(session_id);
+    let session = context.backend().create_session_with_id(session_id);
     let response = session.chat(input, request_context).await?;
 
     // 6. Persist memory
-    if let Err(error) = context.memory_service.persist_turn(session_id, input, &response.content) {
+    if let Err(error) = context.memory_service().persist_turn(session_id, input, &response.content)
+    {
         tracing::warn!("memory persistence failed: {error}");
     }
 

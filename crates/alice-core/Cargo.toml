@@ -15,6 +15,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+ahash = "0.8.12"
 parking_lot.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

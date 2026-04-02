@@ -30,7 +30,7 @@ pub async fn cmd_run(
 ///
 /// Returns an error if the chatbot runner fails.
 pub async fn cmd_chat(context: Arc<AliceRuntimeContext>, session_id: &str) -> eyre::Result<()> {
-    writeln!(std::io::stderr(), "Alice ready (model: {})", context.default_model)?;
+    writeln!(std::io::stderr(), "Alice ready (model: {})", context.default_model())?;
     writeln!(std::io::stderr(), "Type /quit to exit.\n")?;
 
     let adapters: Vec<Box<dyn ChatAdapter>> = vec![Box::new(

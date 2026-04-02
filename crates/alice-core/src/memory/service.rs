@@ -1,8 +1,11 @@
 //! Application service wrapping memory recall and persistence workflows.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    fmt::Write as _,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::memory::{
@@ -84,12 +87,13 @@ impl MemoryService {
 
         let mut output = String::from("Relevant prior memory:\n");
         for (index, hit) in hits.iter().enumerate() {
-            let number = index + 1;
-            output.push_str(&format!(
-                "{number}. [{}] {}\n",
+            let _ = writeln!(
+                output,
+                "{}. [{}] {}",
+                index + 1,
                 hit.entry.topic,
                 hit.entry.summary.trim()
-            ));
+            );
         }
 
         Some(output)
@@ -103,7 +107,8 @@ impl MemoryService {
         assistant_output: &str,
     ) -> Result<(), MemoryServiceError> {
         let now_ms = current_time_millis();
-        let id = format!("mem-{now_ms}-{}", MEMORY_COUNTER.fetch_add(1, Ordering::Relaxed));
+        let counter = MEMORY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let id = format!("mem-{now_ms}-{counter:04}");
 
         let summary = truncate(assistant_output.trim(), 300);
         let raw_excerpt =
@@ -136,22 +141,13 @@ impl MemoryService {
 fn current_time_millis() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let duration = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(value) => value,
-        Err(_) => return 0,
-    };
-    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(1, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn truncate(input: &str, max_chars: usize) -> String {
-    let mut output = String::new();
-    for (idx, ch) in input.chars().enumerate() {
-        if idx >= max_chars {
-            break;
-        }
-        output.push(ch);
-    }
-    output
+    input.chars().take(max_chars).collect()
 }
 
 fn extract_keywords(user_input: &str, assistant_output: &str) -> Vec<String> {

@@ -9,7 +9,7 @@ use alice_core::memory::{
     ports::MemoryStorePort,
 };
 use parking_lot::Mutex;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, ffi::sqlite3_auto_extension, params};
 
 use super::sqlite_schema;
 
@@ -17,19 +17,20 @@ static SQLITE_VEC_INIT: Once = Once::new();
 
 fn ensure_sqlite_vec() {
     SQLITE_VEC_INIT.call_once(|| {
-        // SAFETY: sqlite3_auto_extension expects a function pointer compatible with sqlite
-        // extension init. sqlite_vec::sqlite3_vec_init has the correct signature.
+        // SAFETY: sqlite3_auto_extension expects a function pointer matching the SQLite
+        // extension entry point signature. sqlite_vec::sqlite3_vec_init is provided by the
+        // sqlite-vec crate specifically for this purpose and uses the correct C ABI.
+        // This is the same pattern used in sqlite-vec's own test suite.
+        // The Once guard ensures this runs exactly once, preventing race conditions.
         unsafe {
-            type SqliteEntryPoint = unsafe extern "C" fn(
-                *mut rusqlite::ffi::sqlite3,
-                *mut *mut std::os::raw::c_char,
-                *const rusqlite::ffi::sqlite3_api_routines,
-            ) -> std::os::raw::c_int;
-
-            let init_fn = std::mem::transmute::<*const (), SqliteEntryPoint>(
-                sqlite_vec::sqlite3_vec_init as *const (),
-            );
-            rusqlite::ffi::sqlite3_auto_extension(Some(init_fn));
+            sqlite3_auto_extension(Some(std::mem::transmute::<
+                *const (),
+                unsafe extern "C" fn(
+                    *mut rusqlite::ffi::sqlite3,
+                    *mut *mut std::os::raw::c_char,
+                    *const rusqlite::ffi::sqlite3_api_routines,
+                ) -> std::os::raw::c_int,
+            >(sqlite_vec::sqlite3_vec_init as *const ())));
         }
     });
 }
@@ -123,7 +124,15 @@ impl SqliteMemoryStore {
 
     fn row_to_entry(row: &rusqlite::Row<'_>) -> Result<MemoryEntry, rusqlite::Error> {
         let keywords_json: String = row.get(5)?;
-        let keywords: Vec<String> = serde_json::from_str(&keywords_json).unwrap_or_default();
+        let keywords: Vec<String> = serde_json::from_str(&keywords_json).map_err(|e| {
+            let id: String = row.get(0).unwrap_or_else(|_| "<unknown>".to_string());
+            tracing::warn!(memory_id = %id, error = %e, "failed to parse keywords JSON");
+            rusqlite::Error::InvalidColumnType(
+                5,
+                "keywords".to_string(),
+                rusqlite::types::Type::Text,
+            )
+        })?;
 
         let importance: String = row.get(6)?;
         let embedding_blob: Option<Vec<u8>> = row.get(8)?;
@@ -135,7 +144,13 @@ impl SqliteMemoryStore {
             summary: row.get(3)?,
             raw_excerpt: row.get(4)?,
             keywords,
-            importance: MemoryImportance::from_db(&importance),
+            importance: MemoryImportance::from_db(&importance).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    6,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?,
             embedding: embedding_blob.as_deref().map(Self::blob_to_embedding),
             created_at_epoch_ms: row.get(7)?,
         })
@@ -165,62 +180,58 @@ impl SqliteMemoryStore {
         }
 
         let conn = self.conn.lock();
-        if let Some(session_id) = &query.session_id {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT m.id, m.session_id, m.topic, m.summary, m.raw_excerpt, m.keywords,
-                            m.importance, m.created_at_epoch_ms, m.embedding,
-                            bm25(memories_fts) AS rank
-                     FROM memories_fts
-                     JOIN memories m ON m.rowid = memories_fts.rowid
-                     WHERE memories_fts MATCH ?1 AND m.session_id = ?2
-                     ORDER BY rank
-                     LIMIT ?3",
-                )
-                .map_err(db_err)?;
-
-            let rows = stmt
-                .query_map(params![sanitized, session_id, limit as i64], |row| {
-                    let entry = Self::row_to_entry(row)?;
-                    let rank: f32 = row.get(9)?;
-                    Ok((entry, rank))
-                })
-                .map_err(db_err)?;
-
-            for row in rows {
-                let (entry, rank) = row.map_err(db_err)?;
-                output.insert(entry.id.clone(), (entry, normalize_bm25_rank(rank)));
+        let mut stmt = match &query.session_id {
+            Some(session_id) => {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT m.id, m.session_id, m.topic, m.summary, m.raw_excerpt, m.keywords, \
+                         m.importance, m.created_at_epoch_ms, m.embedding, \
+                         bm25(memories_fts) AS rank \
+                         FROM memories_fts \
+                         JOIN memories m ON m.rowid = memories_fts.rowid \
+                         WHERE memories_fts MATCH ?1 AND m.session_id = ?2 \
+                         ORDER BY rank \
+                         LIMIT ?3",
+                    )
+                    .map_err(db_err)?;
+                let rows = stmt
+                    .query_map(params![sanitized, session_id, limit as i64], Self::map_fts_row)
+                    .map_err(db_err)?;
+                for row in rows {
+                    let (id, entry, score) = row.map_err(db_err)?;
+                    output.insert(id, (entry, score));
+                }
+                return Ok(output);
             }
-            return Ok(output);
-        }
+            None => conn
+                .prepare(
+                    "SELECT m.id, m.session_id, m.topic, m.summary, m.raw_excerpt, m.keywords, \
+                     m.importance, m.created_at_epoch_ms, m.embedding, \
+                     bm25(memories_fts) AS rank \
+                     FROM memories_fts \
+                     JOIN memories m ON m.rowid = memories_fts.rowid \
+                     WHERE memories_fts MATCH ?1 \
+                     ORDER BY rank \
+                     LIMIT ?2",
+                )
+                .map_err(db_err)?,
+        };
 
-        let mut stmt = conn
-            .prepare(
-                "SELECT m.id, m.session_id, m.topic, m.summary, m.raw_excerpt, m.keywords,
-                        m.importance, m.created_at_epoch_ms, m.embedding,
-                        bm25(memories_fts) AS rank
-                 FROM memories_fts
-                 JOIN memories m ON m.rowid = memories_fts.rowid
-                 WHERE memories_fts MATCH ?1
-                 ORDER BY rank
-                 LIMIT ?2",
-            )
-            .map_err(db_err)?;
-
-        let rows = stmt
-            .query_map(params![sanitized, limit as i64], |row| {
-                let entry = Self::row_to_entry(row)?;
-                let rank: f32 = row.get(9)?;
-                Ok((entry, rank))
-            })
-            .map_err(db_err)?;
+        let rows =
+            stmt.query_map(params![sanitized, limit as i64], Self::map_fts_row).map_err(db_err)?;
 
         for row in rows {
-            let (entry, rank) = row.map_err(db_err)?;
-            output.insert(entry.id.clone(), (entry, normalize_bm25_rank(rank)));
+            let (id, entry, score) = row.map_err(db_err)?;
+            output.insert(id, (entry, score));
         }
 
         Ok(output)
+    }
+
+    fn map_fts_row(row: &rusqlite::Row<'_>) -> Result<(String, MemoryEntry, f32), rusqlite::Error> {
+        let entry = Self::row_to_entry(row)?;
+        let rank: f32 = row.get(9)?;
+        Ok((entry.id.clone(), entry, normalize_bm25_rank(rank)))
     }
 
     fn vector_candidates(
