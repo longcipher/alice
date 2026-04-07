@@ -31,3 +31,6 @@ tracing.workspace = true
 [features]
 discord = ["dep:serenity", "dep:eyre"]
 telegram = ["dep:teloxide", "dep:eyre"]
+
+[dev-dependencies]
+tempfile.workspace = true

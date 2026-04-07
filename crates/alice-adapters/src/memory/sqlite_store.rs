@@ -374,3 +374,137 @@ impl MemoryStorePort for SqliteMemoryStore {
         Ok(hits)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alice_core::memory::domain::{HybridWeights, MemoryEntry, MemoryImportance, RecallQuery};
+    use tempfile::NamedTempFile;
+
+    use super::*;
+
+    fn create_temp_db() -> SqliteMemoryStore {
+        let temp_file = NamedTempFile::new().unwrap();
+        let path = temp_file.path();
+        SqliteMemoryStore::open(path, 384, true).unwrap()
+    }
+
+    #[test]
+    fn open_creates_schema() {
+        let store = create_temp_db();
+        // Should not panic - schema creation should work
+        let conn = store.conn.lock();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(count > 0, "schema should be created");
+    }
+
+    #[test]
+    fn insert_and_recall_memory() {
+        let store = create_temp_db();
+        let entry = MemoryEntry {
+            id: "test-id".to_string(),
+            session_id: "test-session".to_string(),
+            topic: "test topic".to_string(),
+            summary: "test summary".to_string(),
+            raw_excerpt: "The quick brown fox jumps over the lazy dog".to_string(),
+            keywords: vec!["test".to_string(), "fox".to_string()],
+            importance: MemoryImportance::Medium,
+            embedding: Some(vec![0.1, 0.2, 0.3]),
+            created_at_epoch_ms: 1234567890,
+        };
+
+        // Store the entry
+        store.insert(&entry).unwrap();
+
+        // Recall using hybrid search
+        let query = RecallQuery {
+            session_id: Some("test-session".to_string()),
+            text: "fox".to_string(),
+            query_embedding: None,
+            limit: 10,
+        };
+
+        let hits = store.recall_hybrid(&query, HybridWeights::default()).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry.id, entry.id);
+        assert_eq!(hits[0].entry.raw_excerpt, entry.raw_excerpt);
+    }
+
+    #[test]
+    fn recall_with_different_queries() {
+        let store = create_temp_db();
+        let entry1 = MemoryEntry {
+            id: "test-1".to_string(),
+            session_id: "test-session".to_string(),
+            topic: "fox story".to_string(),
+            summary: "A story about a fox".to_string(),
+            raw_excerpt: "The quick brown fox jumps over the lazy dog".to_string(),
+            keywords: vec!["fox".to_string(), "dog".to_string()],
+            importance: MemoryImportance::High,
+            embedding: None,
+            created_at_epoch_ms: 1234567890,
+        };
+        let entry2 = MemoryEntry {
+            id: "test-2".to_string(),
+            session_id: "test-session".to_string(),
+            topic: "cat story".to_string(),
+            summary: "A story about cats".to_string(),
+            raw_excerpt: "A completely different story about cats".to_string(),
+            keywords: vec!["cat".to_string()],
+            importance: MemoryImportance::Medium,
+            embedding: None,
+            created_at_epoch_ms: 1234567891,
+        };
+
+        store.insert(&entry1).unwrap();
+        store.insert(&entry2).unwrap();
+
+        let query = RecallQuery {
+            session_id: Some("test-session".to_string()),
+            text: "fox".to_string(),
+            query_embedding: None,
+            limit: 10,
+        };
+
+        let hits = store.recall_hybrid(&query, HybridWeights::default()).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry.id, "test-1");
+    }
+
+    #[test]
+    fn vector_disabled_fallback() {
+        let temp_path =
+            std::env::temp_dir().join(format!("alice-test-vector-{}.db", std::process::id()));
+        let store = SqliteMemoryStore::open(&temp_path, 384, false).unwrap();
+
+        let entry = MemoryEntry {
+            id: "test-vector-disabled".to_string(),
+            session_id: "test-session".to_string(),
+            topic: "vector test".to_string(),
+            summary: "test content".to_string(),
+            raw_excerpt: "test content".to_string(),
+            keywords: vec!["test".to_string()],
+            importance: MemoryImportance::Medium,
+            embedding: Some(vec![0.1, 0.2, 0.3]), // Embedding provided but vector disabled
+            created_at_epoch_ms: 1234567890,
+        };
+
+        // Should store successfully even with embedding when vector is disabled
+        store.insert(&entry).unwrap();
+
+        // Test recall still works with FTS only
+        let query = RecallQuery {
+            session_id: Some("test-session".to_string()),
+            text: "test".to_string(),
+            query_embedding: None,
+            limit: 10,
+        };
+
+        let hits = store.recall_hybrid(&query, HybridWeights::default()).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry.id, "test-vector-disabled");
+    }
+}

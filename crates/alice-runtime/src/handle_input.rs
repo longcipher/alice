@@ -2,12 +2,13 @@
 
 use bob_runtime::agent_loop::AgentLoopOutput;
 
-use crate::{context::AliceRuntimeContext, memory_context::run_turn_with_memory};
+use crate::context::AliceRuntimeContext;
 
 /// Handle a single user input with full pipeline: slash commands, skills, memory.
 ///
 /// For slash commands: delegates to `AgentLoop` for deterministic handling.
-/// For natural language: runs through `run_turn_with_memory` with skill injection.
+/// For natural language: uses `AgentLoop::handle_input_with_context` with injected memory and
+/// skills.
 ///
 /// # Errors
 ///
@@ -30,13 +31,73 @@ pub async fn handle_input_with_skills(
             Ok(output)
         }
         bob_runtime::router::RouteResult::NaturalLanguage(_) => {
-            // NL input: memory + skills + runtime via agent backend
-            let response = run_turn_with_memory(context, session_id, trimmed).await?;
-            if response.is_quit {
-                return Ok(AgentLoopOutput::Quit);
+            // NL input: inject memory + skills into RequestContext for AgentLoop
+            let recalled = match context.memory_service().recall_for_turn(session_id, trimmed) {
+                Ok(hits) => hits,
+                Err(error) => {
+                    tracing::warn!("memory recall failed: {error}");
+                    Vec::new()
+                }
+            };
+            let memory_prompt =
+                alice_core::memory::service::MemoryService::render_recall_context(&recalled);
+
+            let skills_bundle = context.skill_composer().map(|composer| {
+                crate::skill_wiring::inject_skills_context(
+                    composer,
+                    trimmed,
+                    context.skill_token_budget(),
+                )
+            });
+
+            // Compose system prompt: memory + skills
+            let mut system_parts = Vec::new();
+            if let Some(ref mem) = memory_prompt {
+                system_parts.push(mem.as_str());
             }
-            // Convert bob_runtime::AgentResponse → AgentLoopOutput
-            Ok(AgentLoopOutput::CommandOutput(response.content))
+            if let Some(ref bundle) = skills_bundle &&
+                !bundle.prompt.is_empty()
+            {
+                system_parts.push(&bundle.prompt);
+            }
+            let system_prompt =
+                if system_parts.is_empty() { None } else { Some(system_parts.join("\n\n")) };
+
+            // Build request context with skills metadata
+            let (selected_skills, tool_policy) = if let Some(ref bundle) = skills_bundle {
+                let policy = if bundle.selected_allowed_tools.is_empty() {
+                    bob_core::types::RequestToolPolicy::default()
+                } else {
+                    bob_core::types::RequestToolPolicy {
+                        allow_tools: Some(bundle.selected_allowed_tools.clone()),
+                        ..bob_core::types::RequestToolPolicy::default()
+                    }
+                };
+                (bundle.selected_skill_names.clone(), policy)
+            } else {
+                (Vec::new(), bob_core::types::RequestToolPolicy::default())
+            };
+
+            let request_context =
+                bob_core::types::RequestContext { system_prompt, selected_skills, tool_policy };
+
+            // Use AgentLoop.handle_input_with_context for per-request context injection
+            let output = context
+                .agent_loop()
+                .handle_input_with_context(trimmed, session_id, request_context)
+                .await?;
+
+            // Handle memory persistence (AgentLoop doesn't do this automatically)
+            if let AgentLoopOutput::Response(response) = &output {
+                let bob_core::types::AgentRunResult::Finished(finished) = response;
+                if let Err(error) =
+                    context.memory_service().persist_turn(session_id, trimmed, &finished.content)
+                {
+                    tracing::warn!("memory persistence failed: {error}");
+                }
+            }
+
+            Ok(output)
         }
     }
 }

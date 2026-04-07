@@ -385,7 +385,7 @@ async fn handle_input_with_skills_nl_input() {
     assert!(output.is_ok(), "handle_input_with_skills should succeed for NL input");
     let Ok(output) = output else { return };
     assert!(
-        matches!(output, AgentLoopOutput::CommandOutput(_)),
-        "NL input should return AgentLoopOutput::CommandOutput, got: {output:?}"
+        matches!(output, AgentLoopOutput::Response(_)),
+        "NL input should return AgentLoopOutput::Response, got: {output:?}"
     );
 }

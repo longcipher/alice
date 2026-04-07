@@ -7,6 +7,10 @@ use crate::context::AliceRuntimeContext;
 
 /// Execute one turn with memory-aware + skill-augmented prompt context.
 ///
+/// This function is primarily used for CLI commands that need direct agent backend access.
+/// For interactive chat scenarios, use `handle_input_with_skills` which properly integrates
+/// with AgentLoop and supports slash command routing.
+///
 /// # Errors
 ///
 /// Returns an error if the agent runtime fails to execute the turn.

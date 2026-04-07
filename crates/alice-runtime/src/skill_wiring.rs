@@ -1,4 +1,9 @@
 //! Skill system wiring: bootstrap + per-turn injection.
+//!
+//! Skills are integrated using Bob 0.3.2's AgentLoop.handle_input_with_context(),
+//! which supports per-request system prompt injection via RequestContext.
+//! This allows memory and skill context to be injected into each turn without
+//! bypassing the AgentLoop's slash command routing and tape recording features.
 
 use std::path::PathBuf;
 
@@ -34,6 +39,15 @@ pub fn build_skill_composer(cfg: &SkillsConfig) -> eyre::Result<Option<SkillProm
 /// Render skill context for a given user input.
 ///
 /// Returns the rendered prompt, selected skill names, and allowed tool list.
+/// This context is used with Bob 0.3.2's AgentLoop.handle_input_with_context()
+/// to inject per-request system prompts, selected skills, and tool policies.
+///
+/// # Returns
+///
+/// A [`RenderedSkillsPrompt`] containing:
+/// - `prompt`: Skill-augmented system prompt text
+/// - `selected_skill_names`: Names of skills selected for this input
+/// - `selected_allowed_tools`: Tool names that should be allowed for this turn
 pub fn inject_skills_context(
     composer: &SkillPromptComposer,
     input: &str,
