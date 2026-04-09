@@ -282,6 +282,15 @@ id = "filesystem"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 tool_timeout_ms = 15000
+
+# Example with environment variables:
+[[mcp.servers]]
+id = "github"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+
+[mcp.servers.env]
+GITHUB_TOKEN = "your-github-token"
 ```
 
 ### Scheduler
