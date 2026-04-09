@@ -3,7 +3,7 @@
 use std::{collections::HashMap, path::Path, sync::Once};
 
 use alice_core::memory::{
-    domain::{HybridWeights, MemoryEntry, MemoryImportance, RecallHit, RecallQuery},
+    domain::{HybridWeights, MemoryEntry, MemoryImportance, RecallHit, RecallQuery, UserProfile},
     error::MemoryStoreError,
     hybrid::{fuse_scores, normalize_bm25_rank, sanitize_fts_query},
     ports::MemoryStorePort,
@@ -153,6 +153,21 @@ impl SqliteMemoryStore {
             })?,
             embedding: embedding_blob.as_deref().map(Self::blob_to_embedding),
             created_at_epoch_ms: row.get(7)?,
+        })
+    }
+
+    fn row_to_profile(row: &rusqlite::Row<'_>) -> Result<UserProfile, rusqlite::Error> {
+        let traits_json: String = row.get(2)?;
+        let traits = serde_json::from_str(&traits_json).map_err(|error| {
+            tracing::warn!(error = %error, "failed to parse user profile traits JSON");
+            rusqlite::Error::InvalidColumnType(2, "traits".to_string(), rusqlite::types::Type::Text)
+        })?;
+
+        Ok(UserProfile {
+            profile_id: row.get(0)?,
+            summary: row.get(1)?,
+            traits,
+            updated_at_epoch_ms: row.get(3)?,
         })
     }
 
@@ -372,6 +387,34 @@ impl MemoryStorePort for SqliteMemoryStore {
         hits.truncate(limit);
 
         Ok(hits)
+    }
+
+    fn upsert_user_profile(&self, profile: &UserProfile) -> Result<(), MemoryStoreError> {
+        let traits = serde_json::to_string(&profile.traits)?;
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO user_profiles (profile_id, summary, traits, updated_at_epoch_ms)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(profile_id) DO UPDATE SET
+                 summary = excluded.summary,
+                 traits = excluded.traits,
+                 updated_at_epoch_ms = excluded.updated_at_epoch_ms",
+            params![profile.profile_id, profile.summary, traits, profile.updated_at_epoch_ms,],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    fn get_user_profile(&self, profile_id: &str) -> Result<Option<UserProfile>, MemoryStoreError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT profile_id, summary, traits, updated_at_epoch_ms
+                 FROM user_profiles
+                 WHERE profile_id = ?1",
+            )
+            .map_err(db_err)?;
+        stmt.query_row(params![profile_id], Self::row_to_profile).optional().map_err(db_err)
     }
 }
 

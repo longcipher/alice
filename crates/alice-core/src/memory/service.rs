@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::memory::{
-    domain::{HybridWeights, MemoryEntry, MemoryImportance, RecallHit, RecallQuery},
+    domain::{HybridWeights, MemoryEntry, MemoryImportance, RecallHit, RecallQuery, UserProfile},
     error::{MemoryServiceError, MemoryValidationError},
     hybrid::simple_text_embedding,
     ports::MemoryStorePort,
@@ -99,6 +99,67 @@ impl MemoryService {
         Some(output)
     }
 
+    /// Load the durable profile associated with a user identity.
+    pub fn load_user_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<Option<UserProfile>, MemoryServiceError> {
+        self.store.get_user_profile(profile_id).map_err(MemoryServiceError::from)
+    }
+
+    /// Render a persisted user profile as prompt context.
+    #[must_use]
+    pub fn render_user_profile_context(profile: &UserProfile) -> Option<String> {
+        if profile.summary.trim().is_empty() && profile.traits.is_empty() {
+            return None;
+        }
+
+        let mut output = String::from("Known user profile:\n");
+        if !profile.summary.trim().is_empty() {
+            let _ = writeln!(output, "Summary: {}", profile.summary.trim());
+        }
+        if !profile.traits.is_empty() {
+            output.push_str("Traits:\n");
+            for trait_line in &profile.traits {
+                let _ = writeln!(output, "- {}", trait_line.trim());
+            }
+        }
+
+        Some(output)
+    }
+
+    /// Update a user's durable profile using the latest turn.
+    pub fn update_profile_from_turn(
+        &self,
+        profile_id: &str,
+        user_input: &str,
+        assistant_output: &str,
+    ) -> Result<Option<UserProfile>, MemoryServiceError> {
+        let existing = self.store.get_user_profile(profile_id)?;
+        let mut traits = existing.as_ref().map_or_else(Vec::new, |profile| profile.traits.clone());
+
+        for trait_line in extract_profile_traits(user_input, assistant_output) {
+            if traits.iter().any(|existing| existing.eq_ignore_ascii_case(&trait_line)) {
+                continue;
+            }
+            traits.push(trait_line);
+        }
+
+        if traits.is_empty() {
+            return Ok(existing);
+        }
+
+        let profile = UserProfile {
+            profile_id: profile_id.to_string(),
+            summary: build_profile_summary(&traits),
+            traits: cap_profile_traits(traits),
+            updated_at_epoch_ms: current_time_millis(),
+        };
+
+        self.store.upsert_user_profile(&profile)?;
+        Ok(Some(profile))
+    }
+
     /// Persist one turn as a memory entry.
     pub fn persist_turn(
         &self,
@@ -172,6 +233,61 @@ fn extract_keywords(user_input: &str, assistant_output: &str) -> Vec<String> {
     keywords
 }
 
+fn split_sentences(input: &str) -> impl Iterator<Item = &str> {
+    input.split(['.', '!', '?', '\n', ';'])
+}
+
+fn looks_like_profile_signal(sentence: &str) -> bool {
+    let trimmed = sentence.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let lower = trimmed.to_lowercase();
+    ["i ", "i'm", "i am", "my ", "we ", "our ", "prefer", "project", "repo", "working on", "use "]
+        .iter()
+        .any(|marker| lower.contains(marker)) ||
+        ["我", "我们", "项目", "偏好"].iter().any(|marker| trimmed.contains(marker))
+}
+
+fn extract_profile_traits(user_input: &str, _assistant_output: &str) -> Vec<String> {
+    let mut traits = Vec::new();
+
+    for sentence in split_sentences(user_input) {
+        let trimmed = sentence.trim();
+        if !looks_like_profile_signal(trimmed) {
+            continue;
+        }
+
+        let trait_line = truncate(trimmed, 160);
+        if trait_line.is_empty() || traits.iter().any(|existing| existing == &trait_line) {
+            continue;
+        }
+        traits.push(trait_line);
+    }
+
+    cap_profile_traits(traits)
+}
+
+fn cap_profile_traits(mut traits: Vec<String>) -> Vec<String> {
+    traits.truncate(8);
+    traits
+}
+
+fn build_profile_summary(traits: &[String]) -> String {
+    let mut summary_parts = traits.iter().take(3).map(|item| item.trim()).collect::<Vec<_>>();
+    if summary_parts.is_empty() {
+        return String::new();
+    }
+
+    let mut summary = summary_parts.remove(0).to_string();
+    if !summary_parts.is_empty() {
+        summary.push(' ');
+        summary.push_str(&summary_parts.join(" "));
+    }
+    truncate(summary.trim(), 240)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -180,7 +296,9 @@ mod tests {
 
     use super::MemoryService;
     use crate::memory::{
-        domain::{HybridWeights, MemoryEntry, MemoryImportance, RecallHit, RecallQuery},
+        domain::{
+            HybridWeights, MemoryEntry, MemoryImportance, RecallHit, RecallQuery, UserProfile,
+        },
         error::MemoryStoreError,
         ports::MemoryStorePort,
     };
@@ -188,6 +306,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct MockStore {
         rows: Mutex<Vec<MemoryEntry>>,
+        profiles: Mutex<Vec<UserProfile>>,
     }
 
     impl MemoryStorePort for MockStore {
@@ -224,6 +343,30 @@ mod tests {
                     final_score: 0.5,
                 })
                 .collect())
+        }
+
+        fn upsert_user_profile(&self, profile: &UserProfile) -> Result<(), MemoryStoreError> {
+            let mut profiles = self.profiles.lock();
+            if let Some(existing) =
+                profiles.iter_mut().find(|item| item.profile_id == profile.profile_id)
+            {
+                *existing = profile.clone();
+            } else {
+                profiles.push(profile.clone());
+            }
+            Ok(())
+        }
+
+        fn get_user_profile(
+            &self,
+            profile_id: &str,
+        ) -> Result<Option<UserProfile>, MemoryStoreError> {
+            Ok(self
+                .profiles
+                .lock()
+                .iter()
+                .find(|profile| profile.profile_id == profile_id)
+                .cloned())
         }
     }
 
@@ -304,5 +447,38 @@ mod tests {
         let store: Arc<dyn MemoryStorePort> = Arc::new(MockStore::default());
         let result = MemoryService::new(store, 0, HybridWeights::default(), 128, false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_profile_from_turn_extracts_traits() {
+        let store: Arc<dyn MemoryStorePort> = Arc::new(MockStore::default());
+        let Ok(service) = MemoryService::new(store, 5, HybridWeights::default(), 128, false) else {
+            return;
+        };
+
+        let profile = service.update_profile_from_turn(
+            "user-1",
+            "I prefer Rust for agent runtimes. Our Alice project uses ACP for execution.",
+            "Acknowledged.",
+        );
+        assert!(profile.is_ok(), "profile update should succeed");
+        let Ok(profile) = profile else {
+            return;
+        };
+        let Some(profile) = profile else {
+            panic!("profile should be created from durable user signals");
+        };
+
+        assert_eq!(profile.profile_id, "user-1");
+        assert!(profile.summary.contains("Rust"));
+        assert_eq!(profile.traits.len(), 2);
+
+        let rendered = MemoryService::render_user_profile_context(&profile);
+        assert!(rendered.is_some(), "profile context should render when traits exist");
+        let Some(rendered) = rendered else {
+            return;
+        };
+        assert!(rendered.contains("Known user profile"));
+        assert!(rendered.contains("Traits:"));
     }
 }

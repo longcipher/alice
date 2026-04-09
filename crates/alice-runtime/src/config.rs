@@ -18,9 +18,15 @@ pub struct AliceConfig {
     /// Skill system settings.
     #[serde(default)]
     pub skills: SkillsConfig,
+    /// Optional post-turn reflection settings.
+    #[serde(default)]
+    pub reflection: ReflectionConfig,
     /// Channel settings.
     #[serde(default)]
     pub channels: ChannelsConfig,
+    /// Background scheduler settings.
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
     /// Optional MCP tool server configuration.
     #[serde(default)]
     pub mcp: McpConfig,
@@ -66,6 +72,11 @@ pub struct AgentBackendConfig {
     /// Which backend to use.
     #[serde(default)]
     pub backend: AgentBackendType,
+    /// Whether ordinary natural-language turns should auto-use orchestration.
+    #[serde(default)]
+    pub auto_orchestrate: bool,
+    /// Named primary ACP profile when multiple profiles are configured.
+    pub primary_profile: Option<String>,
     /// ACP agent command (only used when backend is "acp").
     pub acp_command: Option<String>,
     /// ACP agent arguments.
@@ -73,6 +84,21 @@ pub struct AgentBackendConfig {
     pub acp_args: Vec<String>,
     /// ACP agent working directory.
     pub acp_working_dir: Option<String>,
+    /// Named ACP backend profiles for orchestration.
+    #[serde(default)]
+    pub acp_profiles: HashMap<String, AcpProfileConfig>,
+}
+
+/// One named ACP backend profile.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AcpProfileConfig {
+    /// Shell command to invoke the ACP agent.
+    pub command: String,
+    /// Arguments passed to the command.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Working directory for the ACP agent subprocess.
+    pub working_dir: Option<String>,
 }
 
 /// Memory subsystem settings.
@@ -117,6 +143,14 @@ const fn default_token_budget() -> usize {
     1800
 }
 
+fn default_learned_skills_dir() -> String {
+    "./skills/learned".to_string()
+}
+
+const fn default_scheduler_poll_interval_ms() -> u64 {
+    30_000
+}
+
 /// Skill system settings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillsConfig {
@@ -137,6 +171,23 @@ pub struct SkillsConfig {
 impl Default for SkillsConfig {
     fn default() -> Self {
         Self { enabled: true, max_selected: 3, token_budget: 1800, sources: Vec::new() }
+    }
+}
+
+/// Post-turn reflection settings for synthesizing learned skills.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReflectionConfig {
+    /// Whether post-turn reflection is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Directory where learned skills are materialized.
+    #[serde(default = "default_learned_skills_dir")]
+    pub learned_skills_dir: String,
+}
+
+impl Default for ReflectionConfig {
+    fn default() -> Self {
+        Self { enabled: false, learned_skills_dir: default_learned_skills_dir() }
     }
 }
 
@@ -167,6 +218,23 @@ pub struct ChannelProviderConfig {
     /// Whether this channel is enabled.
     #[serde(default)]
     pub enabled: bool,
+}
+
+/// Background scheduler settings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SchedulerConfig {
+    /// Whether the background scheduler loop is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Poll interval for due-task checks.
+    #[serde(default = "default_scheduler_poll_interval_ms")]
+    pub poll_interval_ms: u64,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self { enabled: false, poll_interval_ms: default_scheduler_poll_interval_ms() }
+    }
 }
 
 /// MCP server list.
@@ -228,6 +296,7 @@ default_model = "openai:gpt-4o-mini"
         let Ok(parsed) = parsed else { return };
 
         assert_eq!(parsed.runtime.default_model, "openai:gpt-4o-mini");
+        assert!(!parsed.agent.auto_orchestrate);
         assert_eq!(parsed.memory.recall_limit, 6);
         assert!(parsed.mcp.servers.is_empty());
         // skills defaults
@@ -235,9 +304,13 @@ default_model = "openai:gpt-4o-mini"
         assert_eq!(parsed.skills.max_selected, 3);
         assert_eq!(parsed.skills.token_budget, 1800);
         assert!(parsed.skills.sources.is_empty());
+        assert!(!parsed.reflection.enabled);
+        assert_eq!(parsed.reflection.learned_skills_dir, "./skills/learned");
         // channels defaults
         assert!(!parsed.channels.discord.enabled);
         assert!(!parsed.channels.telegram.enabled);
+        assert!(!parsed.scheduler.enabled);
+        assert_eq!(parsed.scheduler.poll_interval_ms, 30_000);
     }
 
     #[test]
@@ -248,6 +321,9 @@ default_model = "openai:gpt-4o-mini"
 max_steps = 9
 turn_timeout_ms = 55000
 dispatch_mode = "prompt_guided"
+
+[agent]
+auto_orchestrate = true
 
 [memory]
 db_path = "./tmp/alice.db"
@@ -262,6 +338,10 @@ enabled = false
 max_selected = 5
 token_budget = 2000
 
+[reflection]
+enabled = true
+learned_skills_dir = "./skills/learned"
+
 [[skills.sources]]
 path = ".alice/skills"
 recursive = true
@@ -271,6 +351,10 @@ enabled = true
 
 [channels.telegram]
 enabled = true
+
+[scheduler]
+enabled = true
+poll_interval_ms = 15000
 
 [[mcp.servers]]
 id = "filesystem"
@@ -291,6 +375,7 @@ tool_timeout_ms = 15000
 
         assert_eq!(parsed.runtime.max_steps, Some(9));
         assert_eq!(parsed.runtime.dispatch_mode, Some(DispatchMode::PromptGuided));
+        assert!(parsed.agent.auto_orchestrate);
         assert_eq!(parsed.memory.vector_dimensions, 256);
         assert!(!parsed.memory.enable_vector);
         assert_eq!(parsed.mcp.servers.len(), 1);
@@ -302,9 +387,13 @@ tool_timeout_ms = 15000
         assert_eq!(parsed.skills.sources.len(), 1);
         assert_eq!(parsed.skills.sources[0].path, ".alice/skills");
         assert!(parsed.skills.sources[0].recursive);
+        assert!(parsed.reflection.enabled);
+        assert_eq!(parsed.reflection.learned_skills_dir, "./skills/learned");
         // channels
         assert!(parsed.channels.discord.enabled);
         assert!(parsed.channels.telegram.enabled);
+        assert!(parsed.scheduler.enabled);
+        assert_eq!(parsed.scheduler.poll_interval_ms, 15_000);
     }
 
     #[test]
@@ -415,5 +504,48 @@ GITHUB_TOKEN = "test-token"
         assert_eq!(parsed.mcp.servers[1].tool_timeout_ms, Some(30_000));
         let Some(ref env) = parsed.mcp.servers[1].env else { return };
         assert_eq!(env.get("GITHUB_TOKEN").map(String::as_str), Some("test-token"));
+    }
+
+    #[test]
+    fn parse_config_with_acp_profiles() {
+        let input = r#"
+[runtime]
+default_model = "openai:gpt-4o-mini"
+
+[agent]
+backend = "acp"
+primary_profile = "manager"
+
+[agent.acp_profiles.manager]
+command = "manager-agent"
+args = ["--fast"]
+working_dir = "/tmp/manager"
+
+[agent.acp_profiles.writer]
+command = "writer-agent"
+args = ["--safe"]
+"#;
+
+        let config = config::Config::builder()
+            .add_source(config::File::from_str(input, config::FileFormat::Toml))
+            .build();
+        assert!(config.is_ok(), "acp profile config should parse");
+        let Ok(config) = config else { return };
+
+        let parsed: Result<AliceConfig, config::ConfigError> = config.try_deserialize();
+        assert!(parsed.is_ok(), "acp profile config should deserialize");
+        let Ok(parsed) = parsed else { return };
+
+        assert_eq!(parsed.agent.backend, AgentBackendType::Acp);
+        assert_eq!(parsed.agent.primary_profile.as_deref(), Some("manager"));
+        assert_eq!(parsed.agent.acp_profiles.len(), 2);
+        assert_eq!(
+            parsed.agent.acp_profiles.get("manager").map(|profile| profile.command.as_str()),
+            Some("manager-agent")
+        );
+        let Some(writer) = parsed.agent.acp_profiles.get("writer") else {
+            panic!("writer profile should exist");
+        };
+        assert_eq!(writer.args, vec!["--safe".to_string()]);
     }
 }

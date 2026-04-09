@@ -27,6 +27,12 @@ pub struct CliReplChatAdapter {
     stdin: BufReader<tokio::io::Stdin>,
     /// Fixed session identifier for this CLI session.
     session_id: String,
+    /// User identifier surfaced through chat events.
+    user_id: String,
+    /// Display username surfaced through chat events.
+    user_name: String,
+    /// Display full name surfaced through chat events.
+    full_name: String,
     /// Monotonically increasing message counter.
     msg_counter: AtomicU64,
 }
@@ -43,9 +49,18 @@ impl CliReplChatAdapter {
     /// Create a new CLI REPL chat adapter with the given session identifier.
     #[must_use]
     pub fn new(session_id: String) -> Self {
+        Self::with_user_id(session_id, "local".to_string())
+    }
+
+    /// Create a new CLI REPL adapter with an explicit user id.
+    #[must_use]
+    pub fn with_user_id(session_id: String, user_id: String) -> Self {
         Self {
             stdin: BufReader::new(tokio::io::stdin()),
             session_id,
+            user_name: user_id.clone(),
+            full_name: user_id.clone(),
+            user_id,
             msg_counter: AtomicU64::new(0),
         }
     }
@@ -85,9 +100,9 @@ impl ChatAdapter for CliReplChatAdapter {
                         id,
                         text,
                         author: Author {
-                            user_id: "local".into(),
-                            user_name: "user".into(),
-                            full_name: "Local User".into(),
+                            user_id: self.user_id.clone(),
+                            user_name: self.user_name.clone(),
+                            full_name: self.full_name.clone(),
                             is_bot: false,
                         },
                         attachments: vec![],

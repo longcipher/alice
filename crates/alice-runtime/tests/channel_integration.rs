@@ -6,11 +6,18 @@
 
 use std::{collections::VecDeque, sync::Arc};
 
-use alice_adapters::memory::sqlite_store::SqliteMemoryStore;
-use alice_core::memory::{domain::HybridWeights, service::MemoryService};
+use alice_adapters::{
+    memory::sqlite_store::SqliteMemoryStore, runtime_state::sqlite_store::SqliteRuntimeStateStore,
+};
+use alice_core::{
+    memory::{domain::HybridWeights, service::MemoryService},
+    runtime_state::service::RuntimeStateService,
+};
 use alice_runtime::{
-    agent_backend::bob_backend::BobAgentBackend, chatbot_runner::run_chatbot,
-    context::AliceRuntimeContext,
+    agent_backend::bob_backend::BobAgentBackend,
+    chatbot_runner::run_chatbot,
+    config::SkillsConfig,
+    context::{AliceRuntimeContext, AliceRuntimeServices},
 };
 use async_trait::async_trait;
 use bob_adapters::tape_memory::InMemoryTapeStore;
@@ -148,16 +155,24 @@ fn build_test_context() -> Option<AliceRuntimeContext> {
 
     let backend: Arc<dyn alice_runtime::agent_backend::AgentBackend> =
         Arc::new(BobAgentBackend::new(agent.clone()));
+    let runtime_state_store = SqliteRuntimeStateStore::in_memory().ok()?;
+    let runtime_state_service = RuntimeStateService::new(Arc::new(runtime_state_store)).ok()?;
 
-    Some(AliceRuntimeContext {
+    Some(AliceRuntimeContext::new(
         agent_loop,
         agent,
-        backend,
-        memory_service: Arc::new(memory_service),
-        skill_composer: None,
-        skill_token_budget: 1800,
-        default_model: "test-model".to_string(),
-    })
+        AliceRuntimeServices {
+            backend,
+            memory_service: Arc::new(memory_service),
+            runtime_state_service: Arc::new(runtime_state_service),
+            channel_dispatcher: alice_runtime::channel_dispatch::ChannelDispatcher::new(),
+            orchestrator: None,
+            auto_orchestrate: false,
+            skills_config: SkillsConfig::default(),
+            reflector: None,
+            default_model: "test-model".to_string(),
+        },
+    ))
 }
 
 fn make_author() -> Author {

@@ -306,19 +306,22 @@ async fn run_session_local(
     }
 
     // Create a new session
-    let acp_session_id =
-        match conn.new_session(acp::NewSessionRequest::new(std::path::Path::new("."))).await {
-            Ok(resp) => resp.session_id,
-            Err(e) => {
-                tracing::error!(session_id, "ACP new_session failed: {e}");
-                let _ = child.kill().await;
-                while let Some(cmd) = cmd_rx.recv().await {
-                    let SessionCmd::Prompt { result_tx, .. } = cmd;
-                    let _ = result_tx.send(Err(eyre::eyre!("ACP new_session failed: {e}")));
-                }
-                return;
+    let working_dir = config
+        .working_dir
+        .as_deref()
+        .map_or_else(|| std::path::Path::new("."), std::path::Path::new);
+    let acp_session_id = match conn.new_session(acp::NewSessionRequest::new(working_dir)).await {
+        Ok(resp) => resp.session_id,
+        Err(e) => {
+            tracing::error!(session_id, "ACP new_session failed: {e}");
+            let _ = child.kill().await;
+            while let Some(cmd) = cmd_rx.recv().await {
+                let SessionCmd::Prompt { result_tx, .. } = cmd;
+                let _ = result_tx.send(Err(eyre::eyre!("ACP new_session failed: {e}")));
             }
-        };
+            return;
+        }
+    };
 
     tracing::info!(
         session_id,

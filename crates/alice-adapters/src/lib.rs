@@ -8,3 +8,6 @@ pub mod channel;
 
 /// Memory persistence adapters.
 pub mod memory;
+
+/// Runtime-state persistence adapters.
+pub mod runtime_state;

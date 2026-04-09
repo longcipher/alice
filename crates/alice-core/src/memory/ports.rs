@@ -1,7 +1,7 @@
 //! Port traits for memory persistence and retrieval.
 
 use crate::memory::{
-    domain::{HybridWeights, MemoryEntry, RecallHit, RecallQuery},
+    domain::{HybridWeights, MemoryEntry, RecallHit, RecallQuery, UserProfile},
     error::MemoryStoreError,
 };
 
@@ -19,4 +19,10 @@ pub trait MemoryStorePort: Send + Sync {
         query: &RecallQuery,
         weights: HybridWeights,
     ) -> Result<Vec<RecallHit>, MemoryStoreError>;
+
+    /// Insert or update a long-lived user profile.
+    fn upsert_user_profile(&self, profile: &UserProfile) -> Result<(), MemoryStoreError>;
+
+    /// Load a user profile when one exists.
+    fn get_user_profile(&self, profile_id: &str) -> Result<Option<UserProfile>, MemoryStoreError>;
 }

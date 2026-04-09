@@ -7,9 +7,25 @@ dispatch_mode = "native_preferred"
 # Agent backend selection: "bob" (default) or "acp" (requires --features acp-agent).
 # [agent]
 # backend = "bob"
+# auto_orchestrate = false
 # acp_command = "claude-agent-acp"
 # acp_args = []
 # acp_working_dir = "."
+#
+# # Optional named ACP profiles for orchestration
+# # Set auto_orchestrate = true to fan out ordinary natural-language turns
+# # across all non-primary ACP profiles.
+# primary_profile = "manager"
+#
+# [agent.acp_profiles.manager]
+# command = "opencode"
+# args = ["serve", "--acp"]
+# working_dir = "."
+#
+# [agent.acp_profiles.writer]
+# command = "codex"
+# args = ["--acp"]
+# working_dir = "."
 
 [memory]
 db_path = "./.alice/memory.db"
@@ -18,6 +34,10 @@ bm25_weight = 0.3
 vector_weight = 0.7
 vector_dimensions = 384
 enable_vector = true
+
+# Alice now keeps lightweight long-term user profiles in the same memory DB.
+# Profiles are refreshed automatically from durable self-descriptions such as
+# preferences, project context, and workflow constraints.
 
 # Skill system configuration — auto-selects relevant SKILL.md files per turn.
 # [skills]
@@ -29,6 +49,14 @@ enable_vector = true
 # path = "./skills"
 # recursive = true
 
+# Optional post-turn reflection. When enabled, Alice asks a hidden reflector
+# to turn reusable workflows into learned `SKILL.md` files under the directory
+# below. Point the directory under one of your configured skill sources so the
+# learned skills are eligible for future turns.
+# [reflection]
+# enabled = true
+# learned_skills_dir = "./skills/learned"
+
 # Channel adapters — enable multi-channel input beyond the default CLI REPL.
 # Discord requires ALICE_DISCORD_TOKEN env var.
 # Telegram requires ALICE_TELEGRAM_TOKEN env var.
@@ -36,6 +64,13 @@ enable_vector = true
 # enabled = false
 # [channels.telegram]
 # enabled = false
+
+# Background scheduler for persisted recurring tasks. The loop runs in
+# long-lived `chat` and `channel` sessions when enabled, and will post task
+# results back to the active bound thread when a live channel adapter exists.
+# [scheduler]
+# enabled = false
+# poll_interval_ms = 30000
 
 # Built-in tools (local/file_read, local/file_write, local/file_list,
 # local/shell_exec) are always available. Additional MCP servers can be

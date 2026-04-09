@@ -66,6 +66,19 @@ pub struct MemoryEntry {
     pub created_at_epoch_ms: i64,
 }
 
+/// Long-lived user profile distilled from prior turns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserProfile {
+    /// Stable profile identifier.
+    pub profile_id: String,
+    /// Condensed one-paragraph summary of the user's preferences and context.
+    pub summary: String,
+    /// Durable facts or preferences extracted from prior turns.
+    pub traits: Vec<String>,
+    /// Unix epoch milliseconds for the last profile refresh.
+    pub updated_at_epoch_ms: i64,
+}
+
 /// Query used for turn recall.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecallQuery {
@@ -163,6 +176,24 @@ mod tests {
         assert_eq!(entry.importance, MemoryImportance::High);
         assert!(entry.embedding.is_none());
         assert_eq!(entry.created_at_epoch_ms, 1_000);
+    }
+
+    /// `UserProfile` retains its summary and durable traits.
+    #[test]
+    fn user_profile_construction() {
+        let profile = UserProfile {
+            profile_id: "user-1".to_string(),
+            summary: "Prefers Rust and works on Alice.".to_string(),
+            traits: vec![
+                "Prefers Rust for agent runtimes.".to_string(),
+                "Maintains the Alice project.".to_string(),
+            ],
+            updated_at_epoch_ms: 1_234,
+        };
+
+        assert_eq!(profile.profile_id, "user-1");
+        assert_eq!(profile.traits.len(), 2);
+        assert_eq!(profile.updated_at_epoch_ms, 1_234);
     }
 
     /// `RecallQuery` handles unicode and special characters without panicking.

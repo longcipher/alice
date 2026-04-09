@@ -9,6 +9,13 @@
 
 A configurable AI agent application with pluggable backends, built with hexagonal architecture on top of the [Bob](https://github.com/longcipher/bob) framework.
 
+Alice combines short-term turn memory with two longer-lived learning layers:
+
+- User profiles: Alice distills durable user preferences and project context into a profile that is injected into future turns.
+- Learned skills: when reflection is enabled, Alice can synthesize reusable `SKILL.md` files from successful sessions and save them into a configured skills directory.
+- Global identity bindings: CLI, Telegram, and Discord users can be linked to one global user id so active sessions survive channel switches.
+- Scheduled tasks: Alice can persist recurring background prompts in SQLite, execute them from a Tokio scheduler loop, and push results back into the active bound channel thread when available.
+
 ## Architecture
 
 ```text
@@ -82,6 +89,15 @@ cargo run -p alice-cli -- --config alice.toml chat
 # Run one prompt and exit
 cargo run -p alice-cli -- --config alice.toml run "summarize our current memory setup"
 
+# Issue a bind token for a global user id
+cargo run -p alice-cli -- --config alice.toml bind-token alice-user-1 --provider telegram
+
+# Create a background scheduled task
+cargo run -p alice-cli -- --config alice.toml schedule add \
+  --global-user-id alice-user-1 \
+  --prompt "summarize recent alerts" \
+  --every-minutes 60
+
 # Run with multi-channel support
 cargo run -p alice-cli -- --config alice.toml channel
 ```
@@ -104,6 +120,14 @@ bm25_weight = 0.3
 vector_weight = 0.7
 vector_dimensions = 384
 enable_vector = true
+
+[reflection]
+enabled = false
+learned_skills_dir = "./skills/learned"
+
+[scheduler]
+enabled = false
+poll_interval_ms = 30000
 ```
 
 ### Agent Backend
@@ -122,6 +146,22 @@ backend = "acp"
 acp_command = "opencode"
 acp_args = ["serve", "--acp"]
 acp_working_dir = "/path/to/project"
+
+# Multi-profile ACP orchestration
+[agent]
+backend = "acp"
+auto_orchestrate = true
+primary_profile = "manager"
+
+[agent.acp_profiles.manager]
+command = "opencode"
+args = ["serve", "--acp"]
+working_dir = "/path/to/project"
+
+[agent.acp_profiles.writer]
+command = "codex"
+args = ["--acp"]
+working_dir = "/path/to/project"
 ```
 
 Build with ACP support:
@@ -144,6 +184,41 @@ token_budget = 1800
 path = "./skills"
 recursive = true
 ```
+
+When `[reflection]` is enabled, point `learned_skills_dir` under one of your configured skill source roots, for example `./skills/learned`. Alice reloads skill sources on each turn, so reflected skills can be selected without restarting the process.
+
+### Long-Term Profiles
+
+Alice stores long-lived user profiles alongside the memory index in SQLite. These profiles are updated from durable self-descriptions in user turns, such as preferences, project constraints, and repository context, then injected into future prompts as "Known user profile" context.
+
+### Global Identity Binding
+
+Use `--global-user-id` on CLI `run` or `chat` sessions to anchor them to a stable user identity:
+
+```bash
+cargo run -p alice-cli -- --config alice.toml chat --global-user-id alice-user-1
+```
+
+Then issue a bind token and consume it from Telegram or Discord with `/bind <token>`:
+
+```bash
+cargo run -p alice-cli -- --config alice.toml bind-token alice-user-1 --provider telegram
+```
+
+Once a channel identity is bound, Alice reuses the latest active session lease for that global user whenever possible.
+For long-running channel sessions, Alice also records the active thread id so background scheduler results can be posted back to the same Telegram or Discord conversation.
+
+### Learned Skill Reflection
+
+Enable post-turn reflection to have Alice run a hidden reflection pass after successful responses:
+
+```toml
+[reflection]
+enabled = true
+learned_skills_dir = "./skills/learned"
+```
+
+The reflector writes learned workflows as `./skills/learned/<skill-name>/SKILL.md`. If a turn does not teach a reusable workflow, nothing is written.
 
 ### Telegram
 
@@ -182,6 +257,8 @@ cargo run -p alice-cli --features telegram -- --config alice.toml channel
 
 Messages sent to your bot will be processed by Alice and responses sent back. Each chat creates a unique session for memory continuity.
 
+To link a Telegram account to an existing CLI identity, issue a bind token from the CLI and send `/bind <token>` to the bot.
+
 ### Discord
 
 ```toml
@@ -206,6 +283,51 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 tool_timeout_ms = 15000
 ```
+
+### Scheduler
+
+Enable the background scheduler loop in long-running `chat` or `channel` sessions:
+
+```toml
+[scheduler]
+enabled = true
+poll_interval_ms = 30000
+```
+
+Create and inspect scheduled tasks from the CLI:
+
+```bash
+# Every 30 minutes
+cargo run -p alice-cli -- --config alice.toml schedule add \
+  --global-user-id alice-user-1 \
+  --prompt "summarize pending PR reviews" \
+  --every-minutes 30
+
+# Daily at 08:15
+cargo run -p alice-cli -- --config alice.toml schedule add \
+  --global-user-id alice-user-1 \
+  --prompt "prepare the morning project brief" \
+  --daily-hour 8 \
+  --daily-minute 15
+
+cargo run -p alice-cli -- --config alice.toml schedule list
+```
+
+Scheduled tasks execute through the normal memory-aware turn pipeline. When the owning global user has an active bound channel/thread lease and that channel adapter is live, Alice posts the task result back into that same thread.
+
+### ACP Orchestration
+
+When multiple ACP profiles are configured, you can run an explicit manager/worker orchestration flow:
+
+```bash
+cargo run -p alice-cli --features acp-agent -- --config alice.toml orchestrate \
+  --session-id multi-agent-run \
+  --manager-prompt "Plan how to refactor the auth subsystem." \
+  --worker planner "Outline the migration steps." \
+  --worker writer "Draft the concrete code changes."
+```
+
+If `agent.auto_orchestrate = true`, ordinary natural-language chat turns also fan out through the configured non-primary ACP profiles and return the aggregated orchestration summary to the user.
 
 ## Example: Using OpenCode as an ACP Agent
 

@@ -10,14 +10,18 @@
 
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
-use alice_adapters::memory::sqlite_store::SqliteMemoryStore;
-use alice_core::memory::{domain::HybridWeights, service::MemoryService};
+use alice_adapters::{
+    memory::sqlite_store::SqliteMemoryStore, runtime_state::sqlite_store::SqliteRuntimeStateStore,
+};
+use alice_core::{
+    memory::{domain::HybridWeights, service::MemoryService},
+    runtime_state::service::RuntimeStateService,
+};
 use alice_runtime::{
     chatbot_runner::run_chatbot,
     config::{SkillSourceEntry, SkillsConfig},
-    context::AliceRuntimeContext,
+    context::{AliceRuntimeContext, AliceRuntimeServices},
     handle_input::handle_input_with_skills,
-    skill_wiring::build_skill_composer,
 };
 use async_trait::async_trait;
 use bob_adapters::tape_memory::InMemoryTapeStore;
@@ -158,13 +162,13 @@ fn make_event(text: &str) -> ChatEvent {
 
 /// Build a test context with default settings and no skill composer.
 fn build_test_context(memory_service: MemoryService) -> AliceRuntimeContext {
-    build_test_context_with_skills(memory_service, None)
+    build_test_context_with_skills(memory_service, SkillsConfig::default())
 }
 
-/// Build a test context with an optional skill composer.
+/// Build a test context with configurable skill sources.
 fn build_test_context_with_skills(
     memory_service: MemoryService,
-    skill_composer: Option<bob_adapters::skills_agent::SkillPromptComposer>,
+    skills_config: SkillsConfig,
 ) -> AliceRuntimeContext {
     let runtime: Arc<dyn AgentRuntime> = Arc::new(StubRuntime);
     let tools: Arc<dyn bob_core::ports::ToolPort> = Arc::new(NoOpToolPort);
@@ -185,16 +189,32 @@ fn build_test_context_with_skills(
 
     let backend: Arc<dyn alice_runtime::agent_backend::AgentBackend> =
         Arc::new(alice_runtime::agent_backend::bob_backend::BobAgentBackend::new(agent.clone()));
+    let runtime_state_store = SqliteRuntimeStateStore::in_memory();
+    assert!(runtime_state_store.is_ok(), "runtime-state store should initialize");
+    let Ok(runtime_state_store) = runtime_state_store else {
+        panic!("runtime-state store should initialize");
+    };
+    let runtime_state_service = RuntimeStateService::new(Arc::new(runtime_state_store));
+    assert!(runtime_state_service.is_ok(), "runtime-state service should initialize");
+    let Ok(runtime_state_service) = runtime_state_service else {
+        panic!("runtime-state service should initialize");
+    };
 
-    AliceRuntimeContext {
+    AliceRuntimeContext::new(
         agent_loop,
         agent,
-        backend,
-        memory_service: Arc::new(memory_service),
-        skill_composer,
-        skill_token_budget: 1800,
-        default_model: "test-model".to_string(),
-    }
+        AliceRuntimeServices {
+            backend,
+            memory_service: Arc::new(memory_service),
+            runtime_state_service: Arc::new(runtime_state_service),
+            channel_dispatcher: alice_runtime::channel_dispatch::ChannelDispatcher::new(),
+            orchestrator: None,
+            auto_orchestrate: false,
+            skills_config,
+            reflector: None,
+            default_model: "test-model".to_string(),
+        },
+    )
 }
 
 /// Create a `MemoryService` backed by an in-memory SQLite store.
@@ -227,7 +247,7 @@ async fn one_turn_uses_agent_loop_and_persists_memory() {
     let context = build_test_context(memory_service);
 
     // Run a one-shot turn via cmd_run.
-    let result = alice_runtime::commands::cmd_run(&context, "session-1", "test query").await;
+    let result = alice_runtime::commands::cmd_run(&context, "session-1", None, "test query").await;
     assert!(result.is_ok(), "cmd_run should succeed");
 
     // Verify memory was persisted.
@@ -288,15 +308,11 @@ async fn cmd_run_with_skill_composer() {
         token_budget: 1800,
         sources: vec![SkillSourceEntry { path: skills_dir.display().to_string(), recursive: true }],
     };
-    let composer = build_skill_composer(&cfg);
-    assert!(composer.is_ok(), "skill composer should build from fixtures");
-    let Ok(composer) = composer else { return };
-
-    let context = build_test_context_with_skills(memory_service, composer);
+    let context = build_test_context_with_skills(memory_service, cfg);
 
     // Run a one-shot turn — skill composer is present but input may not match.
     let result =
-        alice_runtime::commands::cmd_run(&context, "session-skill", "write rust tests").await;
+        alice_runtime::commands::cmd_run(&context, "session-skill", None, "write rust tests").await;
     assert!(result.is_ok(), "cmd_run with skill composer should succeed");
 }
 
@@ -340,13 +356,11 @@ async fn full_context_with_all_components() {
         token_budget: 1800,
         sources: vec![SkillSourceEntry { path: skills_dir.display().to_string(), recursive: true }],
     };
-    let Ok(composer) = build_skill_composer(&cfg) else { return };
-
-    let context = build_test_context_with_skills(memory_service, composer);
+    let context = build_test_context_with_skills(memory_service, cfg);
 
     // Verify all components are accessible.
-    assert!(context.skill_composer.is_some(), "skill composer should be set");
-    assert_eq!(context.skill_token_budget, 1800);
+    assert!(context.skills_config.enabled, "skills should be enabled");
+    assert_eq!(context.skill_token_budget(), 1800);
     assert_eq!(context.default_model, "test-model");
 
     // Memory service should accept a persist call.
@@ -378,10 +392,15 @@ async fn handle_input_with_skills_nl_input() {
         token_budget: 1800,
         sources: vec![SkillSourceEntry { path: skills_dir.display().to_string(), recursive: true }],
     };
-    let Ok(composer) = build_skill_composer(&cfg) else { return };
-    let context = build_test_context_with_skills(memory_service, composer);
+    let context = build_test_context_with_skills(memory_service, cfg);
 
-    let output = handle_input_with_skills(&context, "nl-session", "explain closures in rust").await;
+    let output = handle_input_with_skills(
+        &context,
+        "nl-session",
+        Some("nl-session"),
+        "explain closures in rust",
+    )
+    .await;
     assert!(output.is_ok(), "handle_input_with_skills should succeed for NL input");
     let Ok(output) = output else { return };
     assert!(

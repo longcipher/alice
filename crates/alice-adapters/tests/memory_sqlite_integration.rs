@@ -2,7 +2,7 @@
 
 use alice_adapters::memory::sqlite_store::SqliteMemoryStore;
 use alice_core::memory::{
-    domain::{HybridWeights, MemoryEntry, MemoryImportance, RecallQuery},
+    domain::{HybridWeights, MemoryEntry, MemoryImportance, RecallQuery, UserProfile},
     ports::MemoryStorePort,
 };
 
@@ -251,6 +251,38 @@ fn fts_query_sanitization_in_recall() {
         );
         assert!(result.is_ok(), "query '{dangerous_query}' should not cause an error");
     }
+}
+
+#[test]
+fn user_profile_roundtrip_persists_traits() {
+    let Ok(store) = SqliteMemoryStore::in_memory(384, false) else {
+        return;
+    };
+
+    let profile = UserProfile {
+        profile_id: "user-42".to_string(),
+        summary: "Prefers Rust systems programming and works on Alice.".to_string(),
+        traits: vec![
+            "Prefers Rust for agent infrastructure.".to_string(),
+            "Maintains the Alice ACP runtime.".to_string(),
+        ],
+        updated_at_epoch_ms: 42,
+    };
+
+    let Ok(()) = store.upsert_user_profile(&profile) else {
+        return;
+    };
+
+    let Ok(loaded) = store.get_user_profile("user-42") else {
+        return;
+    };
+    let Some(loaded) = loaded else {
+        panic!("stored user profile should be readable");
+    };
+
+    assert_eq!(loaded.profile_id, "user-42");
+    assert_eq!(loaded.summary, profile.summary);
+    assert_eq!(loaded.traits, profile.traits);
 }
 
 /// Insert an entry with whitespace-only content; recall should handle it gracefully.

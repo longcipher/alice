@@ -35,6 +35,12 @@ use alice_adapters::channel::cli_repl::CliReplChatAdapter;
 
 // Create a CLI REPL adapter
 let adapter = CliReplChatAdapter::new("my-session".to_string());
+
+// Or create one with a stable user id for global identity continuity
+let adapter = CliReplChatAdapter::with_user_id(
+    "my-session".to_string(),
+    "alice-user-1".to_string(),
+);
 ```
 
 ## License

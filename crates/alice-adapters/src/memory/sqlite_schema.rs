@@ -32,6 +32,16 @@ pub fn init_schema(
         CREATE INDEX IF NOT EXISTS idx_memories_topic ON memories(topic);
         CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at_epoch_ms);
 
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            profile_id TEXT PRIMARY KEY,
+            summary TEXT NOT NULL,
+            traits TEXT NOT NULL,
+            updated_at_epoch_ms INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_profiles_updated
+            ON user_profiles(updated_at_epoch_ms);
+
         CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
             id,
             session_id,

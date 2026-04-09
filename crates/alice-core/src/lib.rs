@@ -5,3 +5,6 @@
 
 /// Local memory subsystem.
 pub mod memory;
+
+/// Runtime state subsystem for identity bindings, active sessions, and schedules.
+pub mod runtime_state;

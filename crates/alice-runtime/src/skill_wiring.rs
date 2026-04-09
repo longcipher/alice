@@ -60,6 +60,23 @@ pub fn inject_skills_context(
     composer.render_bundle_for_input_with_policy(input, &policy)
 }
 
+/// Load skills from disk and render per-turn context on demand.
+///
+/// This keeps learned `SKILL.md` files visible without restarting the process.
+///
+/// # Errors
+///
+/// Returns an error if the configured skill sources cannot be read.
+pub fn render_skills_context(
+    cfg: &SkillsConfig,
+    input: &str,
+) -> eyre::Result<Option<RenderedSkillsPrompt>> {
+    let Some(composer) = build_skill_composer(cfg)? else {
+        return Ok(None);
+    };
+    Ok(Some(inject_skills_context(&composer, input, cfg.token_budget)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
